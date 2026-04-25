@@ -1,0 +1,12 @@
+*.key
+*.crt
+*.pem
+kubeconfig
+token
+node-token
+
+*.swp
+*.swo
+*.bak
+.DS_Store
+Thumbs.db

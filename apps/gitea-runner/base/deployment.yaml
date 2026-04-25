@@ -1,0 +1,180 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitea-runner
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/part-of: ci-runners
+spec:
+  # KEDA ScaledObject manages replica count; this value is overwritten at runtime.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitea-runner
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9101"
+      labels:
+        app: gitea-runner
+        app.kubernetes.io/name: gitea-runner
+        app.kubernetes.io/part-of: ci-runners
+    spec:
+      serviceAccountName: gitea-runner
+      automountServiceAccountToken: false
+      # Must exceed shutdown_timeout in configmap (3600s) so Kubernetes does not
+      # SIGKILL a pod that is still draining a running CI job.
+      terminationGracePeriodSeconds: 3660
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: register
+        image: gitea/act_runner:0.4.1
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: GITEA_INSTANCE_URL
+          value: http://gitea-http.gitea.svc.cluster.local:3000
+        - name: GITEA_RUNNER_REGISTRATION_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: gitea-runner-registration
+              key: token
+
+        - name: GITEA_RUNNER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        command:
+        - sh
+        - -ec
+        - |
+          act_runner -c /config/config.yaml register --ephemeral --no-interactive \
+            --instance "${GITEA_INSTANCE_URL}" \
+            --token "${GITEA_RUNNER_REGISTRATION_TOKEN}" \
+            --name "${GITEA_RUNNER_NAME}" 
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+      containers:
+      - name: runner
+        image: gitea/act_runner:0.4.1
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: GITEA_INSTANCE_URL
+          value: http://gitea-http.gitea.svc.cluster.local:3000
+        command:
+        - sh
+        - -ec
+        - |
+          until wget -qO- http://127.0.0.1:2375/_ping 2>/dev/null; do sleep 1; done
+          exec act_runner -c /config/config.yaml daemon
+        ports:
+        - name: metrics
+          containerPort: 9101
+        startupProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          periodSeconds: 30
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+      - name: dind
+        image: docker:27-dind
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+          runAsUser: 0
+          runAsGroup: 0
+          readOnlyRootFilesystem: false
+          # RuntimeDefault seccomp (inherited from pod) blocks mount/unshare syscalls
+          # that dockerd needs even with privileged: true on k3s nodes.
+          seccompProfile:
+            type: Unconfined
+        env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+        args:
+        # No --host arg: entrypoint defaults to tcp://0.0.0.0:2375 (one binding).
+        # Passing --host=tcp://127.0.0.1:2375 causes a double-bind because the
+        # entrypoint's host-detection grep is case-sensitive (matches --Host, not
+        # --host) and silently appends a second 0.0.0.0:2375 binding, making the
+        # 127.0.0.1 bind fail with EADDRINUSE. Runner connects via 127.0.0.1:2375
+        # which is reachable on 0.0.0.0 within the pod network namespace.
+        - --storage-driver=vfs
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 1
+            memory: 1Gi
+        volumeMounts:
+        - name: docker-data
+          mountPath: /var/lib/docker
+      volumes:
+      - name: config
+        configMap:
+          name: gitea-runner-config
+      - name: data
+        emptyDir: {}
+      - name: docker-data
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}

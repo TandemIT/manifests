@@ -1,0 +1,27 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: gitea-runner
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/part-of: ci-runners
+spec:
+  scaleTargetRef:
+    name: gitea-runner
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 120
+  # Hold at 2 replicas if the Gitea API is unreachable for 3 consecutive polls.
+  fallback:
+    failureThreshold: 3
+    replicas: 2
+  triggers:
+  - type: github-runner
+    metadata:
+      githubApiURL: https://git.open-ict.hu/api/v1
+      runnerScope: global
+      labels: ubuntu-latest,ubuntu-24.04,ubuntu-22.04
+      noDefaultLabels: "true"
+    authenticationRef:
+      name: gitea-keda-auth

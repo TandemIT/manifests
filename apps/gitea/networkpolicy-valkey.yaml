@@ -1,0 +1,58 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gitea-valkey-allow
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: valkey-cluster
+    app.kubernetes.io/part-of: source-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: valkey-cluster
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Gitea application pods: client data plane
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: gitea
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Intra-cluster: Valkey nodes to each other (data plane + cluster bus)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: valkey-cluster
+    ports:
+    - protocol: TCP
+      port: 6379    # data plane
+    - protocol: TCP
+      port: 16379   # cluster bus — gossip, failover, slot coordination
+  egress:
+  # Intra-cluster egress: Valkey nodes to each other (data plane + cluster bus)
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: valkey-cluster
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 16379
+  # DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

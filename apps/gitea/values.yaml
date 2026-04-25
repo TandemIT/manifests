@@ -1,0 +1,162 @@
+replicaCount: 1
+
+deployment:
+  # PostgreSQL HA (4 pods) + Valkey cluster (6 pods) need time to pull images and
+  # initialize on first install. Default 600 s expires before pgpool is ready.
+  progressDeadlineSeconds: 1800
+
+image:
+  registry: ""
+  repository: gitea/gitea
+  tag: "1.23.8"
+  pullPolicy: IfNotPresent
+  rootless: true
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+    - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  size: 10Gi
+  accessModes:
+  - ReadWriteOnce
+
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: gitea-gitea-https-redirect@kubernetescrd,gitea-gitea-rate-limit@kubernetescrd
+  hosts:
+  - host: git.open-ict.hu
+    paths:
+    - path: /
+      pathType: Prefix
+  tls:
+  - secretName: gitea-tls
+    hosts:
+    - git.open-ict.hu
+
+service:
+  http:
+    type: ClusterIP
+    port: 3000
+  ssh:
+    type: ClusterIP
+    port: 2222
+    targetPort: 2222
+    protocol: TCP
+
+valkey-cluster:
+  enabled: true
+  cluster:
+    nodes: 6      # 3 masters + 3 replicas (1 replica per master shard)
+    replicas: 1   # replica per master — required for failover
+  podAntiAffinityPreset: hard  # enforce nodes on separate Kubernetes nodes
+
+valkey:
+  enabled: false
+  architecture: standalone
+  primary:
+    persistence:
+      enabled: false
+
+postgresql:
+  enabled: false
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+postgresql-ha:
+  enabled: true
+
+  postgresql:
+    replicaCount: 2
+    repmgrConnectTimeout: 5
+    repmgrReconnectAttempts: 2
+    repmgrReconnectInterval: 3
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  pgpool:
+    replicaCount: 2
+    numInitChildren: 32
+    maxPool: 4
+    persistence:
+      enabled: false
+
+  persistence:
+    enabled: true
+    size: 10Gi
+
+gitea:
+  admin:
+    existingSecret: gitea-admin
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+
+  config:
+    server:
+      DOMAIN: git.open-ict.hu
+      ROOT_URL: "https://git.open-ict.hu/"
+      HTTP_PORT: "3000"
+      PROTOCOL: http
+      ENABLE_GZIP: true
+      TRUSTED_PROXIES: "*"
+      SSH_DOMAIN: git.open-ict.hu
+      SSH_PORT: "2222"
+      SSH_LISTEN_PORT: "2222"
+      START_SSH_SERVER: "true"
+      DISABLE_SSH: "false"
+      LFS_START_SERVER: "true"
+      OFFLINE_MODE: "false"
+
+    database:
+      SSL_MODE: disable
+
+    service:
+      DISABLE_REGISTRATION: "false"
+      ALLOW_ONLY_EXTERNAL_REGISTRATION: "true"
+
+    actions:
+      ENABLED: "true"
+
+    security:
+      INSTALL_LOCK: "true"
+    
+    picture:
+      DISABLE_GRAVATAR: "false"

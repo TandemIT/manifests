@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keda-operator
+  namespace: keda
+spec:
+  template:
+    spec:
+      hostAliases:
+      - ip: 172.16.69.60
+        hostnames:
+        - git.open-ict.hu

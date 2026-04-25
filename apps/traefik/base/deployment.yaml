@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/part-of: platform-ingress
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      annotations:
+        # Baseline scrape hints for cluster monitoring.
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8080"
+      labels:
+        app: traefik
+        app.kubernetes.io/name: traefik
+        app.kubernetes.io/part-of: platform-ingress
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: traefik
+            topologyKey: kubernetes.io/hostname
+      # Traefik needs the pod token to watch Ingress and CRD resources.
+      automountServiceAccountToken: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: traefik
+      containers:
+      - name: traefik
+        image: traefik:v3.3.4
+        imagePullPolicy: IfNotPresent
+        args:
+        - --api.insecure=false
+        - --accesslog=true
+        # Bind to high ports so we can run as non-root.
+        - --entrypoints.web.address=:8000
+        - --entrypoints.websecure.address=:8443
+        - --entrypoints.websecure.http.tls=true
+        # Keep HTTP entrypoint available for cert-manager HTTP-01 challenges.
+        - --entrypoints.ssh.address=:2222/tcp
+        - --providers.kubernetesingress=true
+        - --providers.kubernetesingress.ingressclass=traefik
+        - --providers.kubernetescrd=true
+        - --providers.kubernetescrd.ingressclass=traefik
+        - --metrics.prometheus=true
+        - --ping=true
+        - --log.level=INFO
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - name: web
+          containerPort: 8000
+        - name: websecure
+          containerPort: 8443
+        - name: ssh
+          containerPort: 2222
+        - name: dashboard
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        # Traefik needs writable temp storage while root filesystem stays read-only.
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}

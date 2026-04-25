@@ -1,0 +1,12 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: gitea-keda-auth
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/part-of: ci-runners
+spec:
+  secretTargetRef:
+  - parameter: personalAccessToken
+    name: gitea-api-token
+    key: token

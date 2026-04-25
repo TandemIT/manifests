@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea-runner
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/part-of: ci-runners
+spec:
+  type: ClusterIP
+  selector:
+    app: gitea-runner
+  ports:
+  - name: metrics
+    port: 9101
+    targetPort: metrics

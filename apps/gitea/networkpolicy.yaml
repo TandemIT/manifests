@@ -1,0 +1,86 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gitea-restrict-ingress
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/part-of: source-control
+spec:
+  # Targets the Gitea application pods created by the Helm chart.
+  # The chart uses app.kubernetes.io/name: gitea (not the legacy app: gitea label).
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gitea
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 2222
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gitea-runners
+    ports:
+    - protocol: TCP
+      port: 3000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: keda
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  # Gitea connects to pgpool (connection router), not directly to PostgreSQL nodes.
+  # Bitnami postgresql-ha pgpool pods use app.kubernetes.io/component: pgpool.
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: pgpool
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Valkey cluster is chart-managed in the same namespace.
+  # The valkey-cluster subchart labels pods app.kubernetes.io/name: valkey-cluster.
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: valkey-cluster
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow outbound HTTPS for webhooks, OAuth providers, repository mirroring, and LFS.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow outbound SMTP-TLS for email notifications.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 587
