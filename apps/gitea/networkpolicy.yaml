@@ -39,6 +39,17 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+    # Anubis fetches Open Graph metadata via OG_PASSTHROUGH
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: anubis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: anubis
+      ports:
+        - protocol: TCP
+          port: 3000
   egress:
     # Gitea connects to pgpool (connection router), not directly to PostgreSQL nodes.
     # Bitnami postgresql-ha pgpool pods use app.kubernetes.io/component: pgpool.

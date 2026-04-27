@@ -179,6 +179,13 @@ kubectl create secret generic gitea-oidc \
   --from-literal=secret="<CLIENT_SECRET>" \
   --from-literal=discoveryURL="<DISCOVERY_URL>" \
   --dry-run=client -o yaml | kubectl apply -f -
+
+# Rotate the Anubis signing key (causes all active challenge cookies to expire):
+kubectl create secret generic anubis-key \
+  --namespace anubis \
+  --from-literal=ED25519_PRIVATE_KEY_HEX="$(openssl rand -hex 32)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/anubis -n anubis
 ```
 
 ---
@@ -189,6 +196,7 @@ kubectl create secret generic gitea-oidc \
 # Infrastructure manifests (networkpolicies, routes, etc.)
 kubectl apply -k apps/gitea/
 kubectl apply -k apps/gitea-runner/
+kubectl apply -k apps/anubis/
 
 # Gitea Helm chart upgrade (edit apps/gitea/values.yaml first)
 helm upgrade gitea gitea/gitea \

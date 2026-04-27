@@ -37,7 +37,7 @@ require_cluster
 # Step 2: Ensure required namespaces exist
 # ============================================================================
 step_header 2 "Ensuring required namespaces exist"
-for ns in traefik cert-manager gitea gitea-runners; do
+for ns in traefik cert-manager gitea gitea-runners anubis; do
   ensure_namespace "${ns}"
 done
 
@@ -73,6 +73,14 @@ else
 fi
 
 
+
+if ! kubectl get secret anubis-key -n anubis >/dev/null 2>&1; then
+  kubectl create secret generic anubis-key -n anubis \
+    --from-literal=ED25519_PRIVATE_KEY_HEX="$(openssl rand -hex 32)"
+  log "Created: anubis/anubis-key"
+else
+  log "Exists: anubis/anubis-key"
+fi
 
 OIDC_ENABLED=false
 if kubectl get secret gitea-oidc -n gitea >/dev/null 2>&1; then
@@ -236,6 +244,12 @@ step_header 9 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
 
 
+
+# ============================================================================
+# Step 10: Deploy Anubis
+# ============================================================================
+step_header 10 "Deploying Anubis"
+apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
 
 # ============================================================================
 # Deployment complete

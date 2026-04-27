@@ -1,0 +1,11 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: anubis
+  namespace: anubis
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  forwardAuth:
+    address: "http://anubis.anubis.svc.cluster.local:8080/.within.website/x/cmd/anubis/api/check"
+    trustForwardHeader: true

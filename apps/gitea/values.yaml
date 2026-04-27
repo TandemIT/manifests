@@ -55,7 +55,7 @@ ingress:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.middlewares: gitea-gitea-https-redirect@kubernetescrd,gitea-gitea-rate-limit@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: gitea-gitea-https-redirect@kubernetescrd,anubis-anubis@kubernetescrd,gitea-gitea-rate-limit@kubernetescrd
   hosts:
     - host: git.open-ict.hu
       paths:

@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anubis-policy
+  namespace: anubis
+  labels:
+    app.kubernetes.io/name: anubis
+    app.kubernetes.io/part-of: ingress-protection
+data:
+  policy.yaml: |
+    bots:
+      # Block outright malicious bots (headless scrapers, vuln scanners, etc.)
+      - import: (data)/bots/_deny-pathological.yaml
+
+      # Block aggressive AI/LLM training scrapers
+      - import: (data)/meta/ai-block-aggressive.yaml
+
+      # Allow legitimate search engine crawlers
+      - import: (data)/bots/_allow-search.yaml
+
+      # Allow the git CLI (clone, fetch, push, pull)
+      - name: git-client
+        user_agent_regex: "^git/"
+        action: ALLOW
+
+      # Allow Gitea Actions runner and CI tooling (curl-based API calls)
+      - name: ci-curl
+        user_agent_regex: "^curl/"
+        action: ALLOW
+
+      # Challenge everything else
+      - name: challenge-default
+        user_agent_regex: ".*"
+        action: CHALLENGE
+        challenge:
+          algorithm: fast
+          difficulty: 4
