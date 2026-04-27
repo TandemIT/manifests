@@ -3,57 +3,57 @@ kind: ClusterRole
 metadata:
   name: traefik
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  - services
-  - endpoints
-  - secrets
-  - nodes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - discovery.k8s.io
-  resources:
-  - endpointslices
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - extensions
-  - networking.k8s.io
-  resources:
-  - ingresses
-  - ingressclasses
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - extensions
-  - networking.k8s.io
-  resources:
-  - ingresses/status
-  verbs:
-  - update
-- apiGroups:
-  - traefik.io
-  resources:
-  - ingressroutes
-  - ingressroutetcps
-  - ingressrouteudps
-  - middlewares
-  - middlewaretcps
-  - traefikservices
-  - serverstransports
-  - serverstransporttcps
-  - tlsoptions
-  - tlsstores
-  verbs:
-  - get
-  - list
-  - watch
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - services
+      - endpoints
+      - secrets
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - traefik.io
+    resources:
+      - ingressroutes
+      - ingressroutetcps
+      - ingressrouteudps
+      - middlewares
+      - middlewaretcps
+      - traefikservices
+      - serverstransports
+      - serverstransporttcps
+      - tlsoptions
+      - tlsstores
+    verbs:
+      - get
+      - list
+      - watch

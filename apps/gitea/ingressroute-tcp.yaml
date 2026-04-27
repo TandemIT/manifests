@@ -10,10 +10,10 @@ metadata:
     app.kubernetes.io/part-of: source-control
 spec:
   entryPoints:
-  - ssh
+    - ssh
   routes:
-  - match: HostSNI(`*`)
-    services:
-    # Helm chart creates <release>-ssh Service; was 'gitea' in raw-manifest era.
-    - name: gitea-ssh
-      port: 2222
+    - match: HostSNI(`*`)
+      services:
+        # Helm chart creates <release>-ssh Service; was 'gitea' in raw-manifest era.
+        - name: gitea-ssh
+          port: 2222

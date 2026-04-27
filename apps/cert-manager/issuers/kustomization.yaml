@@ -6,5 +6,5 @@ commonAnnotations:
   app.kubernetes.io/managed-by: kustomize
 
 resources:
-- clusterissuer-letsencrypt-staging.yaml
-- clusterissuer-letsencrypt-prod.yaml
+  - clusterissuer-letsencrypt-staging.yaml
+  - clusterissuer-letsencrypt-prod.yaml

@@ -4,10 +4,10 @@ kind: Kustomization
 # Infrastructure-level concerns owned by kustomize.
 # Gitea application is deployed via: helm upgrade --install gitea gitea/gitea -f apps/gitea/values.yaml
 resources:
-- namespace.yaml
-- middleware.yaml
-- ingressroute-tcp.yaml
-- networkpolicy.yaml
-- networkpolicy-certmanager.yaml
-- networkpolicy-valkey.yaml
-- networkpolicy-postgresql.yaml
+  - namespace.yaml
+  - middleware.yaml
+  - ingressroute-tcp.yaml
+  - networkpolicy.yaml
+  - networkpolicy-certmanager.yaml
+  - networkpolicy-valkey.yaml
+  - networkpolicy-postgresql.yaml

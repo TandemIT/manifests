@@ -10,6 +10,6 @@ spec:
   selector:
     app: gitea-runner
   ports:
-  - name: metrics
-    port: 9101
-    targetPort: metrics
+    - name: metrics
+      port: 9101
+      targetPort: metrics

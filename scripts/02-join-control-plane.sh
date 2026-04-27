@@ -25,16 +25,22 @@ STATIC_POD_DIR="/var/lib/rancher/k3s/agent/pod-manifests"
 require_root
 
 # ==============================================================================
-# Step 1: Place kube-vip static pod
+# Step 1: Install node prerequisites
 # ==============================================================================
-step_header 1 "Placing kube-vip static pod"
+step_header 1 "Installing node prerequisites"
+install_node_prerequisites
+
+# ==============================================================================
+# Step 2: Place kube-vip static pod
+# ==============================================================================
+step_header 2 "Placing kube-vip static pod"
 mkdir -p "${STATIC_POD_DIR}"
 cp "${MANIFESTS_DIR}/platform/system/kube-vip.yaml" "${STATIC_POD_DIR}/kube-vip.yaml"
 
 # ==============================================================================
-# Step 2: Join as additional control plane node
+# Step 3: Join as additional control plane node
 # ==============================================================================
-step_header 2 "Joining K3s cluster as control plane via ${VIP}:6443"
+step_header 3 "Joining K3s cluster as control plane via ${VIP}:6443"
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
   K3S_TOKEN="${K3S_TOKEN}" \

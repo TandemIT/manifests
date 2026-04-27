@@ -2,28 +2,28 @@
 
 ## Cluster topology
 
-| Role          | Count | Notes                                        |
-|---------------|-------|----------------------------------------------|
-| Control plane | 3     | kube-vip CP VIP: `172.16.69.50` (port 6443)  |
-| Worker        | 3     |                                              |
+| Role          | Count | Notes                                       |
+| ------------- | ----- | ------------------------------------------- |
+| Control plane | 3     | kube-vip CP VIP: `172.16.69.50` (port 6443) |
+| Worker        | 3     |                                             |
 
 MetalLB manages LoadBalancer services (L2 mode):
 
 | Service | Ports         | IP source               |
-|---------|---------------|-------------------------|
+| ------- | ------------- | ----------------------- |
 | Traefik | 80, 443, 2222 | MetalLB pool assignment |
 
 ## Component versions
 
-| Component   | Version              |
-|-------------|----------------------|
-| K3s         | v1.32.3+k3s1         |
-| kube-vip    | v0.8.7               |
-| MetalLB     | v0.14.9              |
-| kured       | v1.15.0              |
-| KEDA        | v2.15.1              |
-| Traefik     | v3.3.4               |
-| Gitea       | 1.23.8 (chart ~12.5) |
+| Component | Version              |
+| --------- | -------------------- |
+| K3s       | v1.32.3+k3s1         |
+| kube-vip  | v0.8.7               |
+| MetalLB   | v0.14.9              |
+| kured     | v1.15.0              |
+| KEDA      | v2.15.1              |
+| Traefik   | v3.3.4               |
+| Gitea     | 1.23.8 (chart ~12.5) |
 
 ---
 
@@ -51,7 +51,8 @@ This script:
 3. Applies RBAC and kured
 4. Installs MetalLB and applies the IP pool configuration from `platform/metallb/`
 5. Installs KEDA
-6. Prints the join token and commands for the remaining nodes
+6. Installs Longhorn distributed storage
+7. Prints the join token and commands for the remaining nodes
 
 Save the printed `NODE_TOKEN` — you need it for all other nodes.
 
@@ -130,10 +131,10 @@ Runners start at **0 replicas** and scale up automatically when CI jobs are queu
 
 Responsibilities are split between two components:
 
-| Component | Role                                                  |
-|-----------|-------------------------------------------------------|
-| kube-vip  | Control-plane HA only (VIP 172.16.69.50:6443)         |
-| MetalLB   | Service load balancing, assigns LoadBalancer IPs      |
+| Component | Role                                             |
+| --------- | ------------------------------------------------ |
+| kube-vip  | Control-plane HA only (VIP 172.16.69.50:6443)    |
+| MetalLB   | Service load balancing, assigns LoadBalancer IPs |
 
 kube-vip is **not** involved in application traffic routing. MetalLB operates in L2 mode using ARP, which is compatible with Proxmox LAN environments.
 
@@ -155,18 +156,32 @@ kubectl apply -k platform/metallb/
 ## Updating platform components (Day-2)
 
 ```bash
-# After changing any manifest in platform/:
-
-# RBAC changes
-kubectl apply -k platform/rbac/
-
-# kured changes
-kubectl apply -k platform/system/
-
-# KEDA version bump (edit platform/keda/kustomization.yaml first)
-# --server-side is required: KEDA CRDs exceed the 262 KB client-side annotation limit
-kubectl apply --server-side --force-conflicts -k platform/keda/
+# After changing anything under platform/:
+bash scripts/06-sync-platform.sh
 ```
+
+The script re-applies RBAC, kured, MetalLB config, KEDA, and Longhorn in order.
+
+> **kube-vip exception** — it is a static pod, not managed by kubectl. If you change
+> `platform/system/kube-vip.yaml`, copy it manually to each control plane node:
+>
+> ```bash
+> cp platform/system/kube-vip.yaml /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+> ```
+
+## Secrets (Day-2)
+
+```bash
+# Update the Gitea OIDC provider credentials:
+kubectl create secret generic gitea-oidc \
+  --namespace gitea \
+  --from-literal=key="<CLIENT_ID>" \
+  --from-literal=secret="<CLIENT_SECRET>" \
+  --from-literal=discoveryURL="<DISCOVERY_URL>" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+---
 
 ## Updating application manifests (Day-2)
 

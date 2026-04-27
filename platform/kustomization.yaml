@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-- rbac/
-- system/
-- metallb/
-- keda/
+  - rbac/
+  - system/
+  - metallb/
+  - keda/

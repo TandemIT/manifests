@@ -8,12 +8,12 @@ commonAnnotations:
   app.kubernetes.io/managed-by: kustomize
 
 resources:
-- namespace.yaml
-- serviceaccount.yaml
-- configmap.yaml
-- service.yaml
-- deployment.yaml
-- scaledobject.yaml
-- triggerauthentication.yaml
-- networkpolicy.yaml
-- networkpolicy-metrics.yaml
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - service.yaml
+  - deployment.yaml
+  - scaledobject.yaml
+  - triggerauthentication.yaml
+  - networkpolicy.yaml
+  - networkpolicy-metrics.yaml

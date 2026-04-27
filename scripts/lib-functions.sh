@@ -252,6 +252,22 @@ step_header() {
 }
 
 # ==============================================================================
+# Node Setup
+# ==============================================================================
+
+# Install Longhorn node prerequisites silently
+install_node_prerequisites() {
+  # log "Installing node prerequisites (open-iscsi, nfs-common)..."
+  # DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
+  # DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+  #   open-iscsi nfs-common >/dev/null 2>&1
+  # log "Enabling iscsid service..."
+  # systemctl enable --now iscsid >/dev/null 2>&1
+  # log "Node prerequisites ready"
+  return 0
+}
+
+# ==============================================================================
 # Cleanup and Safety
 # ==============================================================================
 

@@ -17,11 +17,11 @@ spec:
     failureThreshold: 3
     replicas: 2
   triggers:
-  - type: github-runner
-    metadata:
-      githubApiURL: https://git.open-ict.hu/api/v1
-      runnerScope: global
-      labels: ubuntu-latest,ubuntu-24.04,ubuntu-22.04
-      noDefaultLabels: "true"
-    authenticationRef:
-      name: gitea-keda-auth
+    - type: github-runner
+      metadata:
+        githubApiURL: https://git.open-ict.hu/api/v1
+        runnerScope: global
+        labels: ubuntu-latest,ubuntu-24.04,ubuntu-22.04
+        noDefaultLabels: "true"
+      authenticationRef:
+        name: gitea-keda-auth

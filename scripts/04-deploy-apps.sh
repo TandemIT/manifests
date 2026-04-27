@@ -72,6 +72,34 @@ else
   log "Exists: gitea-runners/gitea-api-token"
 fi
 
+
+
+OIDC_ENABLED=false
+if kubectl get secret gitea-oidc -n gitea >/dev/null 2>&1; then
+  log "Exists: gitea/gitea-oidc"
+  OIDC_ENABLED=true
+else
+  echo ""
+  read -rp "  Configure Gitea OIDC login (Authentik)? [y/N]: " OIDC_ANSWER
+  if [[ "${OIDC_ANSWER,,}" == "y" ]]; then
+    echo "  Discovery URL format: https://auth.open-ict.hu/application/o/<slug>/.well-known/openid-configuration"
+    echo ""
+    read -rp "  OIDC Client ID:     " OIDC_KEY
+    read -rsp "  OIDC Client Secret: " OIDC_SECRET
+    echo ""
+    read -rp "  Discovery URL:      " OIDC_DISCOVERY_URL
+    echo ""
+    kubectl create secret generic gitea-oidc -n gitea \
+      --from-literal=key="${OIDC_KEY}" \
+      --from-literal=secret="${OIDC_SECRET}" \
+      --from-literal=discoveryURL="${OIDC_DISCOVERY_URL}"
+    log "Created: gitea/gitea-oidc"
+    OIDC_ENABLED=true
+  else
+    log "Skipping OIDC — Gitea will use local authentication only"
+  fi
+fi
+
 # ============================================================================
 # Step 4: Deploy cert-manager
 # ============================================================================
@@ -83,6 +111,10 @@ until kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1; do sleep 2
 until kubectl get crd issuers.cert-manager.io >/dev/null 2>&1; do sleep 2; done
 kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout=120s >/dev/null
 kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout=120s >/dev/null
+
+log "Waiting for cert-manager webhook to be ready..."
+kubectl rollout status deployment/cert-manager-webhook -n cert-manager --timeout=120s >/dev/null
+kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s >/dev/null
 
 log "Applying cert-manager ClusterIssuers..."
 apply_kustomization "${MANIFESTS_DIR}/apps/cert-manager/issuers"
@@ -103,9 +135,14 @@ log "Adding Gitea Helm repository..."
 helm_repo_add gitea https://dl.gitea.com/charts/
 
 log "Installing/upgrading Gitea Helm chart..."
+GITEA_OIDC_VALUES=()
+if [[ "${OIDC_ENABLED}" == "true" ]]; then
+  GITEA_OIDC_VALUES=(--values "${MANIFESTS_DIR}/apps/gitea/values-oidc.yaml")
+fi
 helm_upgrade_install gitea gitea/gitea gitea \
   --version "~12.5" \
   --values "${MANIFESTS_DIR}/apps/gitea/values.yaml" \
+  "${GITEA_OIDC_VALUES[@]}" \
   --timeout 15m \
   --wait
 
@@ -197,6 +234,8 @@ trap - EXIT
 # ============================================================================
 step_header 9 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
+
+
 
 # ============================================================================
 # Deployment complete

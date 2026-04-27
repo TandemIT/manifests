@@ -7,6 +7,6 @@ metadata:
     app.kubernetes.io/part-of: ci-runners
 spec:
   secretTargetRef:
-  - parameter: personalAccessToken
-    name: gitea-api-token
-    key: token
+    - parameter: personalAccessToken
+      name: gitea-api-token
+      key: token

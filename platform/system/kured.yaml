@@ -16,34 +16,34 @@ spec:
     spec:
       serviceAccountName: kured
       tolerations:
-      - key: node-role.kubernetes.io/control-plane
-        operator: Exists
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/master
-        operator: Exists
-        effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
       hostPID: true
       containers:
-      - name: kured
-        image: ghcr.io/kubereboot/kured:1.15.0
-        imagePullPolicy: IfNotPresent
-        securityContext:
-          privileged: true
-          readOnlyRootFilesystem: true
-        env:
-        - name: KURED_NODE_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        args:
-        - --reboot-days=mon,tue,wed,thu,fri
-        - --start-time=02:00
-        - --end-time=05:00
-        - --time-zone=Local
-        - --period=1h
-        volumeMounts:
-        - mountPath: /tmp
-          name: tmp
+        - name: kured
+          image: ghcr.io/kubereboot/kured:1.15.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: true
+          env:
+            - name: KURED_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          args:
+            - --reboot-days=mon,tue,wed,thu,fri
+            - --start-time=02:00
+            - --end-time=05:00
+            - --time-zone=Local
+            - --period=1h
+          volumeMounts:
+            - mountPath: /tmp
+              name: tmp
       volumes:
-      - name: tmp
-        emptyDir: {}
+        - name: tmp
+          emptyDir: {}

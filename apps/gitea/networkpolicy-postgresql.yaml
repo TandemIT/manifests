@@ -13,39 +13,39 @@ spec:
     matchLabels:
       app.kubernetes.io/component: pgpool
   policyTypes:
-  - Ingress
-  - Egress
+    - Ingress
+    - Egress
   ingress:
-  # Accept client connections from Gitea
-  - from:
-    - podSelector:
-        matchLabels:
-          app.kubernetes.io/name: gitea
-    ports:
-    - protocol: TCP
-      port: 5432
+    # Accept client connections from Gitea
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+      ports:
+        - protocol: TCP
+          port: 5432
   egress:
-  # pgpool routes queries to PostgreSQL nodes
-  - to:
-    - podSelector:
-        matchLabels:
-          app.kubernetes.io/component: postgresql
-    ports:
-    - protocol: TCP
-      port: 5432
-  # DNS
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: kube-system
-      podSelector:
-        matchLabels:
-          k8s-app: kube-dns
-    ports:
-    - protocol: UDP
-      port: 53
-    - protocol: TCP
-      port: 53
+    # pgpool routes queries to PostgreSQL nodes
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 ---
 # Allows repmgr replication and pgpool health checks between PostgreSQL nodes.
 apiVersion: networking.k8s.io/v1
@@ -61,44 +61,44 @@ spec:
     matchLabels:
       app.kubernetes.io/component: postgresql
   policyTypes:
-  - Ingress
-  - Egress
+    - Ingress
+    - Egress
   ingress:
-  # Accept replication connections from peer PostgreSQL nodes (repmgr)
-  - from:
-    - podSelector:
-        matchLabels:
-          app.kubernetes.io/component: postgresql
-    ports:
-    - protocol: TCP
-      port: 5432
-  # Accept query routing from pgpool
-  - from:
-    - podSelector:
-        matchLabels:
-          app.kubernetes.io/component: pgpool
-    ports:
-    - protocol: TCP
-      port: 5432
+    # Accept replication connections from peer PostgreSQL nodes (repmgr)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Accept query routing from pgpool
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: pgpool
+      ports:
+        - protocol: TCP
+          port: 5432
   egress:
-  # Outbound replication to peer PostgreSQL nodes (repmgr streaming replication)
-  - to:
-    - podSelector:
-        matchLabels:
-          app.kubernetes.io/component: postgresql
-    ports:
-    - protocol: TCP
-      port: 5432
-  # DNS
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: kube-system
-      podSelector:
-        matchLabels:
-          k8s-app: kube-dns
-    ports:
-    - protocol: UDP
-      port: 53
-    - protocol: TCP
-      port: 53
+    # Outbound replication to peer PostgreSQL nodes (repmgr streaming replication)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -10,11 +10,11 @@ commonAnnotations:
 
 # Traefik needs its CRDs for Middleware and TCP routing support.
 resources:
-- https://raw.githubusercontent.com/traefik/traefik/v3.3.4/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
-- namespace.yaml
-- serviceaccount.yaml
-- clusterrole.yaml
-- clusterrolebinding.yaml
-- deployment.yaml
-- service.yaml
-- ingressclass.yaml
+  - https://raw.githubusercontent.com/traefik/traefik/v3.3.4/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+  - namespace.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressclass.yaml

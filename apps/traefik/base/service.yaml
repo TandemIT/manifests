@@ -11,12 +11,12 @@ spec:
   selector:
     app: traefik
   ports:
-  - name: web
-    port: 80
-    targetPort: web
-  - name: websecure
-    port: 443
-    targetPort: websecure
-  - name: ssh
-    port: 2222
-    targetPort: ssh
+    - name: web
+      port: 80
+      targetPort: web
+    - name: websecure
+      port: 443
+      targetPort: websecure
+    - name: ssh
+      port: 2222
+      targetPort: ssh

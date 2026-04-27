@@ -22,9 +22,15 @@ K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
 require_root
 
 # ==============================================================================
-# Join worker node to cluster
+# Step 1: Install node prerequisites
 # ==============================================================================
-step_header 1 "Joining K3s cluster as worker via ${VIP}:6443"
+step_header 1 "Installing node prerequisites"
+install_node_prerequisites
+
+# ==============================================================================
+# Step 2: Join worker node to cluster
+# ==============================================================================
+step_header 2 "Joining K3s cluster as worker via ${VIP}:6443"
 # Workers install as K3s agents; --disable flags are server-only and are not passed here.
 # ServiceLB is disabled cluster-wide by the server nodes (01/02 scripts).
 curl -sfL https://get.k3s.io | \

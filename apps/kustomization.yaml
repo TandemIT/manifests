@@ -3,7 +3,7 @@ kind: Kustomization
 
 # Apply Traefik first so the application ingresses and TCP routes have an ingress controller.
 resources:
-- traefik/
-- cert-manager/
-- gitea/
-- gitea-runner/
+  - traefik/
+  - cert-manager/
+  - gitea/
+  - gitea-runner/
