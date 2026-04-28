@@ -1,0 +1,50 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: gitea-https
+  namespace: gitea
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/part-of: source-control
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`git.open-ict.hu`)
+      middlewares:
+        - name: gitea-rate-limit
+          namespace: gitea
+      services:
+        # Traffic goes to Anubis first; Anubis challenges then proxies to Gitea.
+        - name: anubis
+          namespace: anubis
+          port: 8080
+  tls:
+    secretName: gitea-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: gitea-http
+  namespace: gitea
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/part-of: source-control
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`git.open-ict.hu`)
+      middlewares:
+        - name: gitea-https-redirect
+          namespace: gitea
+      services:
+        - name: anubis
+          namespace: anubis
+          port: 8080

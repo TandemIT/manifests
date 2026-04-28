@@ -134,9 +134,17 @@ step_header 5 "Deploying Traefik"
 apply_kustomization "${MANIFESTS_DIR}/apps/traefik"
 
 # ============================================================================
-# Step 6: Deploy Gitea
+# Step 6: Deploy Anubis
+# Anubis sits between Traefik and each protected backend (reverse proxy mode).
+# Deploy before Gitea so the IngressRoute and TLS certificate are ready first.
 # ============================================================================
-step_header 6 "Deploying Gitea"
+step_header 6 "Deploying Anubis"
+apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
+
+# ============================================================================
+# Step 7: Deploy Gitea
+# ============================================================================
+step_header 7 "Deploying Gitea"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea"
 
 log "Adding Gitea Helm repository..."
@@ -155,9 +163,9 @@ helm_upgrade_install gitea gitea/gitea gitea \
   --wait
 
 # ============================================================================
-# Step 7: Wait for critical workloads
+# Step 8: Wait for critical workloads
 # ============================================================================
-step_header 7 "Waiting for critical workloads"
+step_header 8 "Waiting for critical workloads"
 log "Waiting for Traefik deployment..."
 if kubectl get deployment/traefik -n traefik >/dev/null 2>&1; then
   TRAEFIK_DEPLOYMENT="traefik"
@@ -178,9 +186,9 @@ log "Waiting for Gitea deployment..."
 kubectl rollout status deployment/gitea -n gitea --timeout=180s
 
 # ============================================================================
-# Step 8: Bootstrap Gitea runner credentials
+# Step 9: Bootstrap Gitea runner credentials
 # ============================================================================
-step_header 8 "Bootstrapping Gitea runner credentials"
+step_header 9 "Bootstrapping Gitea runner credentials"
 ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
 ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
 
@@ -238,18 +246,10 @@ kill ${PF_PID} 2>/dev/null || true
 trap - EXIT
 
 # ============================================================================
-# Step 9: Deploy Gitea runner infrastructure
+# Step 10: Deploy Gitea runner infrastructure
 # ============================================================================
-step_header 9 "Deploying Gitea runner infrastructure"
+step_header 10 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
-
-
-
-# ============================================================================
-# Step 10: Deploy Anubis
-# ============================================================================
-step_header 10 "Deploying Anubis"
-apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
 
 # ============================================================================
 # Deployment complete

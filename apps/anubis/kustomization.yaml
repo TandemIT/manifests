@@ -3,8 +3,10 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - certificate.yaml
   - policy-configmap.yaml
   - deployment.yaml
   - service.yaml
   - middleware.yaml
+  - ingressroute.yaml
   - networkpolicy.yaml

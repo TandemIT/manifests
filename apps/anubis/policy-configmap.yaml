@@ -9,29 +9,81 @@ metadata:
 data:
   policy.yaml: |
     bots:
-      # Block outright malicious bots (headless scrapers, vuln scanners, etc.)
+      # Block known malicious bots and pathological scrapers
       - import: (data)/bots/_deny-pathological.yaml
+      - import: (data)/bots/aggressive-brazilian-scrapers.yaml
 
       # Block aggressive AI/LLM training scrapers
       - import: (data)/meta/ai-block-aggressive.yaml
 
-      # Allow legitimate search engine crawlers
-      - import: (data)/bots/_allow-search.yaml
+      # Allow legitimate search engine crawlers (Google, Bing, DuckDuckGo, Kagi, etc.)
+      - import: (data)/crawlers/_allow-good.yaml
 
-      # Allow the git CLI (clone, fetch, push, pull)
+      # Challenge Firefox AI preview feature
+      - import: (data)/clients/x-firefox-ai.yaml
+
+      # Allow well-known routes (robots.txt, favicon, /.well-known/*)
+      - import: (data)/common/keep-internet-working.yaml
+
+      # Allow git CLI (clone, fetch, push, pull)
       - name: git-client
         user_agent_regex: "^git/"
         action: ALLOW
 
-      # Allow Gitea Actions runner and CI tooling (curl-based API calls)
+      # Allow curl-based tooling (Gitea Actions runner, CI scripts)
       - name: ci-curl
         user_agent_regex: "^curl/"
         action: ALLOW
 
-      # Challenge everything else
-      - name: challenge-default
-        user_agent_regex: ".*"
+      # Browser-like traffic gains weight; thresholds below decide the challenge level
+      - name: generic-browser
+        user_agent_regex: "Mozilla|Opera"
+        action: WEIGH
+        weight:
+          adjust: 10
+
+    thresholds:
+      - name: minimal-suspicion
+        expression: weight <= 0
+        action: ALLOW
+      - name: mild-suspicion
+        expression:
+          all:
+            - weight > 0
+            - weight < 10
+        action: CHALLENGE
+        challenge:
+          algorithm: metarefresh
+          difficulty: 1
+      - name: moderate-suspicion
+        expression:
+          all:
+            - weight >= 10
+            - weight < 20
+        action: CHALLENGE
+        challenge:
+          algorithm: fast
+          difficulty: 2
+      - name: mild-proof-of-work
+        expression:
+          all:
+            - weight >= 20
+            - weight < 30
         action: CHALLENGE
         challenge:
           algorithm: fast
           difficulty: 4
+      - name: extreme-suspicion
+        expression: weight >= 30
+        action: CHALLENGE
+        challenge:
+          algorithm: fast
+          difficulty: 6
+
+    status_codes:
+      CHALLENGE: 200
+      DENY: 200
+
+    store:
+      backend: memory
+      parameters: {}
