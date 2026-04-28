@@ -56,6 +56,15 @@ else
   log "Exists: gitea/gitea-admin"
 fi
 
+# Garage rpc-secret (must exist before Garage starts)
+if ! kubectl get secret garage-rpc -n atlantis >/dev/null 2>&1; then
+  kubectl create secret generic garage-rpc -n atlantis \
+    --from-literal=rpc-secret="$(openssl rand -hex 32)"
+  log "Created: atlantis/garage-rpc"
+else
+  log "Exists: atlantis/garage-rpc"
+fi
+
 if ! kubectl get secret gitea-runner-registration -n gitea-runners >/dev/null 2>&1; then
   kubectl create secret generic gitea-runner-registration -n gitea-runners \
     --from-literal=token=placeholder-update-in-step-8
@@ -188,9 +197,15 @@ helm_upgrade_install gitea gitea/gitea gitea \
   --wait
 
 # ============================================================================
+# Step 9: Deploy Garage
+# ============================================================================
+step_header 9 "Deploying Garage"
+apply_kustomization "${MANIFESTS_DIR}/apps/garage"
+
+# ============================================================================
 # Step 9: Wait for critical workloads
 # ============================================================================
-step_header 9 "Waiting for critical workloads"
+step_header 10 "Waiting for critical workloads"
 log "Waiting for Traefik deployment..."
 if kubectl get deployment/traefik -n traefik >/dev/null 2>&1; then
   TRAEFIK_DEPLOYMENT="traefik"
@@ -213,7 +228,7 @@ kubectl rollout status deployment/gitea -n gitea --timeout=180s
 # ============================================================================
 # Step 10: Bootstrap Gitea runner credentials
 # ============================================================================
-step_header 10 "Bootstrapping Gitea runner credentials"
+step_header 11 "Bootstrapping Gitea runner credentials"
 ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
 ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
 
@@ -273,7 +288,7 @@ trap - EXIT
 # ============================================================================
 # Step 11: Deploy Gitea runner infrastructure
 # ============================================================================
-step_header 11 "Deploying Gitea runner infrastructure"
+step_header 12 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
 
 # ============================================================================
