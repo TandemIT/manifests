@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: atlantis
+  namespace: atlantis
+  labels:
+    app.kubernetes.io/name: atlantis
+    app.kubernetes.io/part-of: gitops
+spec:
+  serviceName: atlantis
+  replicas: 1
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlantis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlantis
+        app.kubernetes.io/part-of: gitops
+    spec:
+      serviceAccountName: atlantis
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: atlantis
+          image: ghcr.io/runatlantis/atlantis:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 4141
+          env:
+            - name: ATLANTIS_DATA_DIR
+              value: /atlantis
+            - name: ATLANTIS_PORT
+              value: "4141"
+            - name: ATLANTIS_ATLANTIS_URL
+              value: "https://atlantis.open-ict.hu"
+            - name: ATLANTIS_REPO_ALLOWLIST
+              value: "git.open-ict.hu/*"
+            - name: ATLANTIS_GITEA_BASE_URL
+              value: "http://gitea-http.gitea.svc.cluster.local:3000"
+            - name: ATLANTIS_GITEA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: username
+            - name: ATLANTIS_GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: token
+            - name: ATLANTIS_GITEA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: webhook-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 60
+          volumeMounts:
+            - name: data
+              mountPath: /atlantis
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi

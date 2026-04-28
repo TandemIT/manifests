@@ -37,7 +37,7 @@ require_cluster
 # Step 2: Ensure required namespaces exist
 # ============================================================================
 step_header 2 "Ensuring required namespaces exist"
-for ns in traefik cert-manager gitea gitea-runners anubis; do
+for ns in traefik cert-manager gitea gitea-runners anubis atlantis; do
   ensure_namespace "${ns}"
 done
 
@@ -80,6 +80,25 @@ if ! kubectl get secret anubis-key -n anubis >/dev/null 2>&1; then
   log "Created: anubis/anubis-key"
 else
   log "Exists: anubis/anubis-key"
+fi
+
+if ! kubectl get secret atlantis-vcs -n atlantis >/dev/null 2>&1; then
+  echo ""
+  echo "  Atlantis needs a Gitea bot account token and a webhook secret."
+  echo "  Create a bot user in Gitea, generate an API token for it, then provide:"
+  echo ""
+  read -rp "  Gitea bot username:    " ATLANTIS_USER
+  read -rsp "  Gitea API token:       " ATLANTIS_TOKEN
+  echo ""
+  read -rsp "  Webhook secret:        " ATLANTIS_WEBHOOK_SECRET
+  echo ""
+  kubectl create secret generic atlantis-vcs -n atlantis \
+    --from-literal=username="${ATLANTIS_USER}" \
+    --from-literal=token="${ATLANTIS_TOKEN}" \
+    --from-literal=webhook-secret="${ATLANTIS_WEBHOOK_SECRET}"
+  log "Created: atlantis/atlantis-vcs"
+else
+  log "Exists: atlantis/atlantis-vcs"
 fi
 
 OIDC_ENABLED=false
@@ -142,9 +161,15 @@ step_header 6 "Deploying Anubis"
 apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
 
 # ============================================================================
-# Step 7: Deploy Gitea
+# Step 7: Deploy Atlantis
 # ============================================================================
-step_header 7 "Deploying Gitea"
+step_header 7 "Deploying Atlantis"
+apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
+
+# ============================================================================
+# Step 8: Deploy Gitea
+# ============================================================================
+step_header 8 "Deploying Gitea"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea"
 
 log "Adding Gitea Helm repository..."
@@ -163,9 +188,9 @@ helm_upgrade_install gitea gitea/gitea gitea \
   --wait
 
 # ============================================================================
-# Step 8: Wait for critical workloads
+# Step 9: Wait for critical workloads
 # ============================================================================
-step_header 8 "Waiting for critical workloads"
+step_header 9 "Waiting for critical workloads"
 log "Waiting for Traefik deployment..."
 if kubectl get deployment/traefik -n traefik >/dev/null 2>&1; then
   TRAEFIK_DEPLOYMENT="traefik"
@@ -186,9 +211,9 @@ log "Waiting for Gitea deployment..."
 kubectl rollout status deployment/gitea -n gitea --timeout=180s
 
 # ============================================================================
-# Step 9: Bootstrap Gitea runner credentials
+# Step 10: Bootstrap Gitea runner credentials
 # ============================================================================
-step_header 9 "Bootstrapping Gitea runner credentials"
+step_header 10 "Bootstrapping Gitea runner credentials"
 ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
 ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
 
@@ -246,9 +271,9 @@ kill ${PF_PID} 2>/dev/null || true
 trap - EXIT
 
 # ============================================================================
-# Step 10: Deploy Gitea runner infrastructure
+# Step 11: Deploy Gitea runner infrastructure
 # ============================================================================
-step_header 10 "Deploying Gitea runner infrastructure"
+step_header 11 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
 
 # ============================================================================

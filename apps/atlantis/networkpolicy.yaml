@@ -1,0 +1,66 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlantis-restrict
+  namespace: atlantis
+  labels:
+    app.kubernetes.io/name: atlantis
+    app.kubernetes.io/part-of: gitops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlantis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # UI traffic routed through Anubis
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: anubis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: anubis-atlantis
+      ports:
+        - protocol: TCP
+          port: 4141
+    # Gitea webhook delivery (internal, bypasses Anubis)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+      ports:
+        - protocol: TCP
+          port: 4141
+  egress:
+    # Gitea API (for PR comments and status updates)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Terraform provider registry, module downloads, and remote state backends
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

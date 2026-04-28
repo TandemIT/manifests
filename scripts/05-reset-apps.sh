@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib-functions.sh
 source "${SCRIPT_DIR}/lib-functions.sh"
 
-APP_NAMESPACES=(cert-manager traefik anubis gitea gitea-runners)
+APP_NAMESPACES=(cert-manager traefik anubis gitea gitea-runners atlantis)
 TRAEFIK_CLUSTER_RESOURCES=(ingressclass/traefik clusterrole/traefik clusterrolebinding/traefik)
 CERT_MANAGER_CLUSTER_ISSUERS=(clusterissuer/letsencrypt-prod clusterissuer/letsencrypt-staging)
 HELM_RELEASES=(

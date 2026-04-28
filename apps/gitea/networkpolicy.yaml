@@ -50,6 +50,17 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+    # Atlantis reads PR info and posts comments via Gitea API
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atlantis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlantis
+      ports:
+        - protocol: TCP
+          port: 3000
   egress:
     # Gitea connects to pgpool (connection router), not directly to PostgreSQL nodes.
     # Bitnami postgresql-ha pgpool pods use app.kubernetes.io/component: pgpool.
@@ -81,6 +92,17 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # Webhook delivery to Atlantis (internal, avoids Anubis PoW)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atlantis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlantis
+      ports:
+        - protocol: TCP
+          port: 4141
     # Allow outbound HTTPS for webhooks, OAuth providers, repository mirroring, and LFS.
     - to:
         - ipBlock:

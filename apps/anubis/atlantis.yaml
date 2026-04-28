@@ -1,0 +1,113 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: atlantis-tls
+  namespace: anubis
+  labels:
+    app.kubernetes.io/name: anubis-atlantis
+    app.kubernetes.io/part-of: ingress-protection
+spec:
+  secretName: atlantis-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - atlantis.open-ict.hu
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: atlantis-https
+  namespace: anubis
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    app.kubernetes.io/name: anubis-atlantis
+    app.kubernetes.io/part-of: ingress-protection
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`atlantis.open-ict.hu`)
+      services:
+        - name: anubis-atlantis
+          port: 8080
+  tls:
+    secretName: atlantis-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: atlantis-http
+  namespace: anubis
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    app.kubernetes.io/name: anubis-atlantis
+    app.kubernetes.io/part-of: ingress-protection
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`atlantis.open-ict.hu`)
+      middlewares:
+        - name: https-redirect
+      services:
+        - name: anubis-atlantis
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: anubis-atlantis-restrict
+  namespace: anubis
+  labels:
+    app.kubernetes.io/name: anubis-atlantis
+    app.kubernetes.io/part-of: ingress-protection
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: anubis-atlantis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atlantis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlantis
+      ports:
+        - protocol: TCP
+          port: 4141
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

@@ -3,10 +3,12 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - certificate.yaml
   - policy-configmap.yaml
+  - middleware.yaml
   - deployment.yaml
   - service.yaml
-  - middleware.yaml
+  - certificate.yaml
   - ingressroute.yaml
   - networkpolicy.yaml
+  - anubis-atlantis.yaml
+  - atlantis.yaml

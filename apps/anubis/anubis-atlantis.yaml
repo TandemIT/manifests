@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anubis-atlantis
+  namespace: anubis
+  labels:
+    app.kubernetes.io/name: anubis-atlantis
+    app.kubernetes.io/part-of: ingress-protection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: anubis-atlantis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: anubis-atlantis
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: policy
+          configMap:
+            name: anubis-policy
+      containers:
+        - name: anubis
+          image: ghcr.io/techarohq/anubis:latest
+          imagePullPolicy: Always
+          env:
+            - name: BIND
+              value: ":8080"
+            - name: DIFFICULTY
+              value: "4"
+            - name: ED25519_PRIVATE_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: anubis-key
+                  key: ED25519_PRIVATE_KEY_HEX
+            - name: METRICS_BIND
+              value: ":9090"
+            - name: SERVE_ROBOTS_TXT
+              value: "true"
+            - name: TARGET
+              value: "http://atlantis.atlantis.svc.cluster.local:4141"
+            - name: OG_PASSTHROUGH
+              value: "false"
+            - name: POLICY_FNAME
+              value: "/etc/anubis/policy.yaml"
+          volumeMounts:
+            - name: policy
+              mountPath: /etc/anubis
+              readOnly: true
+          resources:
+            limits:
+              cpu: 750m
+              memory: 256Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anubis-atlantis
+  namespace: anubis
+  labels:
+    app.kubernetes.io/name: anubis-atlantis
+    app.kubernetes.io/part-of: ingress-protection
+spec:
+  selector:
+    app.kubernetes.io/name: anubis-atlantis
+  ports:
+    - port: 8080
+      targetPort: 8080
