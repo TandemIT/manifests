@@ -7,7 +7,6 @@ namespace: atlantis
 
 resources:
   - configmap.yaml
-  - secret.yaml
   - statefulset.yaml
   - service.yaml
   - networkpolicy.yaml
