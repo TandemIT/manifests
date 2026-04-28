@@ -359,40 +359,126 @@ The bootstrap scripts generate and store the following as Kubernetes Secrets at 
 
 ---
 
-## Repository Structure
+## Repository Structure & Contents
 
-```
-manifests/
-├── install.sh                        # Entry point (sources scripts/)
-├── COMMANDS.md                       # Full deployment reference
-├── scripts/
-│   ├── 01-bootstrap-first-master.sh  # K3s init + platform stack
-│   ├── 02-join-control-plane.sh      # Additional control-plane nodes
-│   ├── 03-join-worker.sh             # Worker nodes
-│   ├── 04-deploy-apps.sh             # Full application stack
-│   ├── 05-reset-apps.sh              # Tear down applications
-│   └── lib-functions.sh              # Shared bash helpers
-├── platform/                         # Core infrastructure (kustomization)
-│   ├── metallb/                      # L2 load balancer + IP pool
-│   ├── system/                       # kube-vip static pod + kured
-│   ├── rbac/                         # RBAC for system daemons
-│   ├── keda/                         # KEDA operator + host alias patch
-│   └── configs/
-└── apps/                             # Application workloads (kustomization)
-    ├── traefik/                      # Ingress controller
-    │   └── base/                     # Deployment, Service, RBAC, IngressClass
-    ├── cert-manager/                 # PKI automation
-    │   ├── base/                     # Upstream release + host alias patch
-    │   └── issuers/                  # Let's Encrypt prod + staging ClusterIssuers
-        ├── gitea/                        # Git service
-        │   ├── values.yaml               # Helm chart values
-        │   ├── ingressroute-tcp.yaml     # SSH TCP route (port 2222)
-        │   ├── middleware.yaml           # Rate limiting + HTTPS redirect
-        │   └── networkpolicy*.yaml       # Isolation for gitea, postgres, valkey
-        └── gitea-runner/                 # CI/CD runners
-                └── base/                     # Deployment, KEDA ScaledObject, NetworkPolicy
-# Harbor registry directory was removed in April 2026.
-```
+This repository is organized to provide a clear separation between platform infrastructure, application workloads, and operational scripts. Below is an overview of the major directories and files at the root level, along with their purposes:
+
+### Root-Level Files
+
+- **install.sh**: Entry point script for bootstrapping the first control-plane node. It sources the main bootstrap script and should be run on the initial master node.
+- **COMMANDS.md**: Comprehensive command reference for all deployment and operational tasks.
+- **README.md**: This documentation file.
+
+### scripts/
+
+Contains all automation scripts for cluster lifecycle management:
+
+- **01-bootstrap-first-master.sh**: Initializes the first control-plane node and deploys core platform components.
+- **02-join-control-plane.sh**: Used to join additional control-plane nodes to the cluster.
+- **03-join-worker.sh**: Used to join worker nodes.
+- **04-deploy-apps.sh**: Deploys the full application stack (Traefik, cert-manager, Gitea, etc.).
+- **05-reset-apps.sh**: Removes all application workloads from the cluster.
+- **lib-functions.sh**: Shared Bash functions used by other scripts.
+
+### platform/
+
+Holds all platform-level Kubernetes manifests and Kustomize overlays:
+
+- **metallb/**: Configures MetalLB for L2 load balancing and IP address pool management.
+- **system/**: Contains kube-vip static pod manifests for control-plane HA and kured for automated node reboots.
+- **rbac/**: RBAC policies for system daemons and controllers.
+- **keda/**: KEDA operator deployment and host alias patches for autoscaling.
+- **configs/**: Additional platform configuration overlays.
+
+### apps/
+
+Contains application-specific Kubernetes manifests and Kustomize overlays:
+
+- **traefik/**: Ingress controller configuration. The `base/` subdirectory includes deployment, service, RBAC, and IngressClass resources.
+- **cert-manager/**: PKI automation for TLS certificates. Includes `base/` for upstream release and `issuers/` for Let's Encrypt ClusterIssuers.
+- **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, and Valkey.
+- **gitea-runner/**: CI/CD runner deployment. The `base/` subdirectory includes the runner Deployment, KEDA ScaledObject for autoscaling, and NetworkPolicy for isolation.
+- **anubis/**: Example application with its own namespace, certificate, deployment, service, ingress, middleware, and network policies.
+
+- **namespace.yaml**: Defines the Kubernetes namespace for the component.
+- **deployment.yaml**: Describes the Deployment resource for running pods.
+- **service.yaml**: Exposes the application internally or externally.
+- **ingressroute.yaml / ingressroute-tcp.yaml**: Traefik-specific routing for HTTP(S) and TCP (SSH) traffic.
+- **middleware.yaml**: Traefik middleware for rate limiting, redirects, etc.
+- **networkpolicy.yaml**: Enforces network segmentation and security.
+- **certificate.yaml**: Requests TLS certificates via cert-manager.
+- **policy-configmap.yaml**: Stores policy configuration for apps.
+- **kustomization.yaml**: Kustomize manifest for composing resources.
+- **values.yaml**: Helm values for templated deployments (Gitea).
+
+### Middleware
+
+Middleware resources are defined in `middleware.yaml` files found in various application directories (e.g., `apps/gitea/middleware.yaml`, `apps/anubis/middleware.yaml`). These files configure Traefik middleware components such as:
+
+- **Rate limiting**: Protects backend services from excessive requests.
+- **HTTPS redirection**: Ensures all HTTP traffic is redirected to HTTPS.
+- **Header manipulation**: Adds or modifies HTTP headers for security or compliance.
+
+Each service can have its own middleware configuration, referenced by its IngressRoute or IngressRouteTCP resource. This modular approach allows for fine-grained traffic management and security policies per application.
+
+- **namespace.yaml**: Defines the Kubernetes namespace for the component.
+- **deployment.yaml**: Describes the Deployment resource for running pods.
+- **service.yaml**: Exposes the application internally or externally.
+- **ingressroute.yaml / ingressroute-tcp.yaml**: Traefik-specific routing for HTTP(S) and TCP (SSH) traffic.
+- **middleware.yaml**: Traefik middleware for rate limiting, redirects, etc.
+- **networkpolicy.yaml**: Enforces network segmentation and security.
+- **certificate.yaml**: Requests TLS certificates via cert-manager.
+- **policy-configmap.yaml**: Stores policy configuration for apps.
+- **kustomization.yaml**: Kustomize manifest for composing resources.
+- **values.yaml**: Helm values for templated deployments (Gitea).
+
+---
+
+## Tools & Frameworks Used
+
+- **Kubernetes**: Container orchestration and workload management.
+- **Kustomize**: Native Kubernetes configuration management and overlays.
+- **Helm**: Used only for Gitea application deployment.
+- **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic. Traefik's middleware system is used to implement rate limiting, HTTPS redirection, and header manipulation for enhanced security and traffic management.
+- **cert-manager**: Automated TLS certificate management with Let's Encrypt.
+- **MetalLB**: L2 load balancer for exposing services with stable IPs.
+- **KEDA**: Event-driven autoscaling for CI/CD runners.
+- **kube-vip**: Floating VIP for control-plane HA.
+- **kured**: Automated node reboots for security updates.
+
+## Architecture
+
+### Traffic Management with Traefik Middleware
+
+All ingress traffic is routed through Traefik, which leverages its middleware system to enforce security and operational policies. Middleware components are attached to IngressRoute and IngressRouteTCP resources to provide:
+
+- **Rate limiting** to protect backend services from abuse
+- **Automatic HTTP to HTTPS redirection** for secure access
+- **Custom header injection and manipulation** for compliance and security
+
+This approach ensures consistent, centralized traffic management across all applications and services deployed in the cluster.
+
+- **Kubernetes**: Container orchestration and workload management.
+- **Kustomize**: Native Kubernetes configuration management and overlays.
+- **Helm**: Used only for Gitea application deployment.
+- **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic.
+- **cert-manager**: Automated TLS certificate management with Let's Encrypt.
+- **MetalLB**: L2 load balancer for exposing services with stable IPs.
+- **KEDA**: Event-driven autoscaling for CI/CD runners.
+- **kube-vip**: Floating VIP for control-plane HA.
+- **kured**: Automated node reboots for security updates.
+
+---
+
+## Installation & Configuration Notes
+
+1. **Clone the repository to all nodes.**
+2. **Run `install.sh` on the first control-plane node** to bootstrap the cluster and deploy platform components.
+3. **Join additional control-plane and worker nodes** using the provided scripts in the `scripts/` directory.
+4. **Deploy the application stack** with `scripts/04-deploy-apps.sh` after the platform is ready.
+5. **Reset or tear down applications** with `scripts/05-reset-apps.sh` as needed.
+
+All scripts are idempotent and safe to re-run. Secrets are generated at deploy time and stored as Kubernetes Secrets (never committed to the repo).
 
 ---
 
