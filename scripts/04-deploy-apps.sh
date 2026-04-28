@@ -196,11 +196,6 @@ helm_upgrade_install gitea gitea/gitea gitea \
   --timeout 15m \
   --wait
 
-# ============================================================================
-# Step 9: Deploy Garage
-# ============================================================================
-step_header 9 "Deploying Garage"
-apply_kustomization "${MANIFESTS_DIR}/apps/garage"
 
 # ============================================================================
 # Step 9: Wait for critical workloads
