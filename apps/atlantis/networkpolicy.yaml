@@ -57,10 +57,18 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Terraform provider registry, module downloads, and remote state backends
+    # Terraform provider registry and module downloads
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 443
+    # Garage S3 API for Terraform remote state backend (same namespace)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: garage
+      ports:
+        - protocol: TCP
+          port: 3900

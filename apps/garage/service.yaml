@@ -1,0 +1,38 @@
+# Terraform S3 backend example (path-style, no TLS required inside cluster):
+#
+# terraform {
+#   backend "s3" {
+#     bucket   = "terraform-state"
+#     key      = "<workspace>/terraform.tfstate"
+#     region   = "garage"
+#     endpoints = {
+#       s3 = "http://garage.atlantis.svc.cluster.local:3900"
+#     }
+#     use_path_style              = true   # required for Garage
+#     skip_credentials_validation = true
+#     skip_metadata_api_check     = true
+#     skip_region_validation      = true
+#   }
+# }
+#
+# Credentials are supplied automatically by the AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY env vars set on the Atlantis StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: atlantis
+  labels:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/part-of: gitops
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: garage
+  ports:
+    - name: s3
+      port: 3900
+      targetPort: 3900
+    - name: rpc
+      port: 3901
+      targetPort: 3901

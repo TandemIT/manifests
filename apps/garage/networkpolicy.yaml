@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: garage-restrict
+  namespace: atlantis
+  labels:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/part-of: gitops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: garage
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # S3 API access from Atlantis (Terraform remote state backend)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlantis
+      ports:
+        - protocol: TCP
+          port: 3900
+  egress:
+    # DNS resolution only; Garage single-node needs no external access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

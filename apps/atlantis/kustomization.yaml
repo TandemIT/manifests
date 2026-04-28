@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - serviceaccount.yaml
+  - configmap-repos.yaml
   - statefulset.yaml
   - service.yaml
   - networkpolicy.yaml

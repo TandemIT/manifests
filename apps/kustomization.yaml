@@ -9,3 +9,4 @@ resources:
   - gitea/
   - gitea-runner/
   - atlantis/
+  - garage/
