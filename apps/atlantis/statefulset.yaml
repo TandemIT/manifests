@@ -38,7 +38,7 @@ spec:
             - name: ATLANTIS_PORT
               value: "4141"
             - name: ATLANTIS_ATLANTIS_URL
-              value: "https://atlantis.open-ict.hu"
+              value: "https://atlantis.git.open-ict.hu"
             - name: ATLANTIS_REPO_ALLOWLIST
               value: "git.open-ict.hu/*"
             - name: ATLANTIS_GITEA_BASE_URL
