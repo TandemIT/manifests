@@ -26,36 +26,23 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      initContainers:
-        - name: git-config
-          image: ghcr.io/runatlantis/atlantis:v0.31.0
-          command: ["/bin/sh", "-c"]
-          envFrom:
-            - secretRef:
-                name: atlantis-vcs
-          args:
-            - |
-              git config --file /gitconfig \
-                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
-                https://${username}:${token}@git.open-ict.hu/
-
-              git config --file /gitconfig --add \
-                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
-                https://git.open-ict.hu/
-
-              git config --file /gitconfig \
-                credential.http://gitea-http.gitea.svc.cluster.local:3000.helper \
-                '!f(){ echo username=$username; echo password=$token; }; f'
-
-          volumeMounts:
-            - name: gitconfig
-              mountPath: /gitconfig
-              subPath: gitconfig
-
       containers:
         - name: atlantis
           image: ghcr.io/runatlantis/atlantis:v0.31.0
           imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              git config --file /tmp/gitconfig \
+                "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf" \
+                "https://${ATLANTIS_GITEA_USER}:${ATLANTIS_GITEA_TOKEN}@git.open-ict.hu/"
+              git config --file /tmp/gitconfig --add \
+                "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf" \
+                "https://git.open-ict.hu/"
+              git config --file /tmp/gitconfig \
+                "credential.http://gitea-http.gitea.svc.cluster.local:3000.helper" \
+                '!f(){ echo username=$ATLANTIS_GITEA_USER; echo password=$ATLANTIS_GITEA_TOKEN; }; f'
+              exec /usr/local/bin/docker-entrypoint.sh server
 
           ports:
             - name: http
@@ -68,13 +55,34 @@ spec:
             - { name: ATLANTIS_REPO_ALLOWLIST, value: "git.open-ict.hu/*" }
             - { name: ATLANTIS_GITEA_BASE_URL, value: "http://gitea-http.gitea.svc.cluster.local:3000" }
             - { name: ATLANTIS_REPO_CONFIG, value: /etc/atlantis/repos.yaml }
-            - { name: GIT_CONFIG_GLOBAL, value: /gitconfig }
-
-          envFrom:
-            - secretRef:
-                name: atlantis-vcs
-            - secretRef:
-                name: garage-s3-credentials
+            - { name: GIT_CONFIG_GLOBAL, value: /tmp/gitconfig }
+            - name: ATLANTIS_GITEA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: username
+            - name: ATLANTIS_GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: token
+            - name: ATLANTIS_GITEA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: webhook-secret
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: garage-s3-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: garage-s3-credentials
+                  key: secret-access-key
+            - { name: AWS_ENDPOINT_URL_S3, value: "http://garage.atlantis.svc.cluster.local:3900" }
+            - { name: AWS_REGION, value: "garage" }
 
           livenessProbe: &probe
             httpGet:
@@ -93,10 +101,6 @@ spec:
               mountPath: /etc/atlantis/repos.yaml
               subPath: repos.yaml
               readOnly: true
-
-            - name: gitconfig
-              mountPath: /gitconfig
-              subPath: gitconfig
 
           resources:
             requests:
@@ -118,9 +122,6 @@ spec:
         - name: repos-config
           configMap:
             name: atlantis-repos
-
-        - name: gitconfig
-          emptyDir: {}
 
   volumeClaimTemplates:
     - metadata:
