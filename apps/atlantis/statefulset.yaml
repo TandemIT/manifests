@@ -43,6 +43,14 @@ spec:
               value: "git.open-ict.hu/*"
             - name: ATLANTIS_GITEA_BASE_URL
               value: "http://gitea-http.gitea.svc.cluster.local:3000"
+            # Rewrite clone URLs from the external Gitea host to the internal service,
+            # bypassing Traefik and Anubis (PoW challenge) for internal git operations.
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            - name: GIT_CONFIG_KEY_0
+              value: "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf"
+            - name: GIT_CONFIG_VALUE_0
+              value: "https://git.open-ict.hu/"
             - name: ATLANTIS_REPO_CONFIG
               value: /etc/atlantis/repos.yaml
             - name: ATLANTIS_GITEA_USER
