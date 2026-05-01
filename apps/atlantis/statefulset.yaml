@@ -28,7 +28,7 @@ spec:
 
       containers:
         - name: atlantis
-          image: ghcr.io/runatlantis/atlantis:v0.31.0
+          image: ghcr.io/runatlantis/atlantis:v0.42.0
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
