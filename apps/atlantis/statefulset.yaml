@@ -3,132 +3,130 @@ kind: StatefulSet
 metadata:
   name: atlantis
   namespace: atlantis
-  labels:
+  labels: &labels
     app.kubernetes.io/name: atlantis
     app.kubernetes.io/part-of: gitops
+
 spec:
   serviceName: atlantis
   replicas: 1
-  updateStrategy:
-    type: RollingUpdate
   selector:
     matchLabels:
       app.kubernetes.io/name: atlantis
+
   template:
     metadata:
-      labels:
-        app.kubernetes.io/name: atlantis
-        app.kubernetes.io/part-of: gitops
+      labels: *labels
+
     spec:
       serviceAccountName: atlantis
+
       securityContext:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+
+      initContainers:
+        - name: git-config
+          image: ghcr.io/runatlantis/atlantis:v0.31.0
+          command: ["/bin/sh", "-c"]
+          envFrom:
+            - secretRef:
+                name: atlantis-vcs
+          args:
+            - |
+              git config --file /gitconfig \
+                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
+                https://${username}:${token}@git.open-ict.hu/
+
+              git config --file /gitconfig --add \
+                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
+                https://git.open-ict.hu/
+
+              git config --file /gitconfig \
+                credential.http://gitea-http.gitea.svc.cluster.local:3000.helper \
+                '!f(){ echo username=$username; echo password=$token; }; f'
+
+          volumeMounts:
+            - name: gitconfig
+              mountPath: /gitconfig
+              subPath: gitconfig
+
       containers:
         - name: atlantis
           image: ghcr.io/runatlantis/atlantis:v0.31.0
           imagePullPolicy: IfNotPresent
+
           ports:
             - name: http
               containerPort: 4141
+
           env:
-            - name: ATLANTIS_DATA_DIR
-              value: /atlantis
-            - name: ATLANTIS_PORT
-              value: "4141"
-            - name: ATLANTIS_ATLANTIS_URL
-              value: "https://atlantis.git.open-ict.hu"
-            - name: ATLANTIS_REPO_ALLOWLIST
-              value: "git.open-ict.hu/*"
-            - name: ATLANTIS_GITEA_BASE_URL
-              value: "http://gitea-http.gitea.svc.cluster.local:3000"
-            # Rewrite clone URLs from the external Gitea host to the internal service,
-            # bypassing Traefik and Anubis (PoW challenge) for internal git operations.
-            - name: GIT_CONFIG_COUNT
-              value: "1"
-            - name: GIT_CONFIG_KEY_0
-              value: "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf"
-            - name: GIT_CONFIG_VALUE_0
-              value: "https://git.open-ict.hu/"
-            - name: ATLANTIS_REPO_CONFIG
-              value: /etc/atlantis/repos.yaml
-            - name: ATLANTIS_GITEA_USER
-              valueFrom:
-                secretKeyRef:
-                  name: atlantis-vcs
-                  key: username
-            - name: ATLANTIS_GITEA_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: atlantis-vcs
-                  key: token
-            - name: ATLANTIS_GITEA_WEBHOOK_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: atlantis-vcs
-                  key: webhook-secret
-            # Garage S3 credentials injected into Terraform processes as AWS_* env vars
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: garage-s3-credentials
-                  key: access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: garage-s3-credentials
-                  key: secret-access-key
-            - name: AWS_ENDPOINT_URL_S3
-              value: "http://garage.atlantis.svc.cluster.local:3900"
-            - name: AWS_REGION
-              value: "garage"
-          livenessProbe:
+            - { name: ATLANTIS_DATA_DIR, value: /atlantis }
+            - { name: ATLANTIS_PORT, value: "4141" }
+            - { name: ATLANTIS_ATLANTIS_URL, value: "https://atlantis.git.open-ict.hu" }
+            - { name: ATLANTIS_REPO_ALLOWLIST, value: "git.open-ict.hu/*" }
+            - { name: ATLANTIS_GITEA_BASE_URL, value: "http://gitea-http.gitea.svc.cluster.local:3000" }
+            - { name: ATLANTIS_REPO_CONFIG, value: /etc/atlantis/repos.yaml }
+            - { name: GIT_CONFIG_GLOBAL, value: /gitconfig }
+
+          envFrom:
+            - secretRef:
+                name: atlantis-vcs
+            - secretRef:
+                name: garage-s3-credentials
+
+          livenessProbe: &probe
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 60
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 60
+
+          readinessProbe: *probe
+
           volumeMounts:
             - name: data
               mountPath: /atlantis
+
             - name: repos-config
               mountPath: /etc/atlantis/repos.yaml
               subPath: repos.yaml
               readOnly: true
+
+            - name: gitconfig
+              mountPath: /gitconfig
+              subPath: gitconfig
+
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
-              cpu: 1000m
+              cpu: 1
               memory: 1Gi
+
           securityContext:
+            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
+              drop: [ "ALL" ]
+
       volumes:
         - name: repos-config
           configMap:
             name: atlantis-repos
+
+        - name: gitconfig
+          emptyDir: {}
+
   volumeClaimTemplates:
     - metadata:
         name: data
       spec:
-        accessModes:
-          - ReadWriteOnce
+        accessModes: [ "ReadWriteOnce" ]
         resources:
           requests:
             storage: 5Gi
