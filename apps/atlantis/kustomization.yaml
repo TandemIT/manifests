@@ -8,4 +8,4 @@ resources:
   - statefulset.yaml
   - service.yaml
   - networkpolicy.yaml
-  - garage/kustomization.yaml
+  - garage
