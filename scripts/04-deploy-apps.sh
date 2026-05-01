@@ -176,9 +176,54 @@ step_header 7 "Deploying Atlantis"
 apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
 
 # ============================================================================
-# Step 8: Deploy Gitea
+# Step 8: Bootstrap Garage S3 credentials
+# Garage must be running before we can create an access key, so this step
+# comes after the Atlantis kustomization (which also deploys Garage).
+# The Atlantis pod starts with CreateContainerConfigError until this secret
+# exists; once created, Kubernetes retries the pod automatically.
 # ============================================================================
-step_header 8 "Deploying Gitea"
+step_header 8 "Bootstrapping Garage S3 credentials"
+
+log "Waiting for Garage to be ready..."
+kubectl wait pod/garage-0 -n atlantis --for=condition=Ready --timeout=120s
+
+# Apply single-node cluster layout (idempotent: skip if already applied)
+if kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+    | grep -q "NO ROLE ASSIGNED"; then
+  NODE_ID=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+    | awk '/NO ROLE ASSIGNED/{print $1}')
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    layout assign -z dc1 -c 1G "${NODE_ID}"
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    layout apply --version 1
+  log "Applied Garage cluster layout"
+else
+  log "Exists: Garage cluster layout"
+fi
+
+if ! kubectl get secret garage-s3-credentials -n atlantis >/dev/null 2>&1; then
+  KEY_INFO=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    key create atlantis-tf 2>/dev/null)
+  ACCESS_KEY=$(echo "${KEY_INFO}" | awk '/^Key ID:/{print $3}')
+  SECRET_KEY=$(echo "${KEY_INFO}" | awk '/^Secret key:/{print $3}')
+
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    bucket create terraform-state 2>/dev/null || true
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    bucket allow --read --write --owner terraform-state --key "${ACCESS_KEY}"
+
+  kubectl create secret generic garage-s3-credentials -n atlantis \
+    --from-literal=access-key-id="${ACCESS_KEY}" \
+    --from-literal=secret-access-key="${SECRET_KEY}"
+  log "Created: atlantis/garage-s3-credentials"
+else
+  log "Exists: atlantis/garage-s3-credentials"
+fi
+
+# ============================================================================
+# Step 9: Deploy Gitea
+# ============================================================================
+step_header 9 "Deploying Gitea"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea"
 
 log "Adding Gitea Helm repository..."

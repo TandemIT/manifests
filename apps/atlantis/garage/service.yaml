@@ -36,3 +36,6 @@ spec:
     - name: rpc
       port: 3901
       targetPort: 3901
+    - name: admin
+      port: 3903
+      targetPort: 3903
