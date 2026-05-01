@@ -33,9 +33,3 @@ spec:
     - name: s3
       port: 3900
       targetPort: 3900
-    - name: rpc
-      port: 3901
-      targetPort: 3901
-    - name: admin
-      port: 3903
-      targetPort: 3903

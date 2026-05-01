@@ -30,6 +30,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: gitea
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
       ports:
         - protocol: TCP
           port: 4141

@@ -3,7 +3,7 @@ kind: StatefulSet
 metadata:
   name: atlantis
   namespace: atlantis
-  labels: &labels
+  labels:
     app.kubernetes.io/name: atlantis
     app.kubernetes.io/part-of: gitops
 
@@ -16,7 +16,9 @@ spec:
 
   template:
     metadata:
-      labels: *labels
+      labels:
+        app.kubernetes.io/name: atlantis
+        app.kubernetes.io/part-of: gitops
 
     spec:
       serviceAccountName: atlantis
@@ -34,9 +36,6 @@ spec:
           args:
             - |
               git config --file /tmp/gitconfig \
-                "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf" \
-                "https://${ATLANTIS_GITEA_USER}:${ATLANTIS_GITEA_TOKEN}@git.open-ict.hu/"
-              git config --file /tmp/gitconfig --add \
                 "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf" \
                 "https://git.open-ict.hu/"
               git config --file /tmp/gitconfig \
@@ -84,14 +83,19 @@ spec:
             - { name: AWS_ENDPOINT_URL_S3, value: "http://garage.atlantis.svc.cluster.local:3900" }
             - { name: AWS_REGION, value: "garage" }
 
-          livenessProbe: &probe
+          livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 30
             periodSeconds: 60
 
-          readinessProbe: *probe
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
 
           volumeMounts:
             - name: data

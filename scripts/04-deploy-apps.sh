@@ -194,6 +194,8 @@ if kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml statu
     | awk '/NO ROLE ASSIGNED/{print $1}')
   kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
     layout assign -z dc1 -c 1G "${NODE_ID}"
+  # --version 1 is always correct here: the enclosing if-guard only runs when
+  # no layout has ever been applied (Garage starts at layout version 0).
   kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
     layout apply --version 1
   log "Applied Garage cluster layout"
@@ -220,6 +222,9 @@ else
   log "Exists: atlantis/garage-s3-credentials"
 fi
 
+log "Waiting for Atlantis to be ready..."
+kubectl wait pod/atlantis-0 -n atlantis --for=condition=Ready --timeout=120s
+
 # ============================================================================
 # Step 9: Deploy Gitea
 # ============================================================================
@@ -243,7 +248,7 @@ helm_upgrade_install gitea gitea/gitea gitea \
 
 
 # ============================================================================
-# Step 9: Wait for critical workloads
+# Step 10: Wait for critical workloads
 # ============================================================================
 step_header 10 "Waiting for critical workloads"
 log "Waiting for Traefik deployment..."
@@ -266,7 +271,7 @@ log "Waiting for Gitea deployment..."
 kubectl rollout status deployment/gitea -n gitea --timeout=180s
 
 # ============================================================================
-# Step 10: Bootstrap Gitea runner credentials
+# Step 11: Bootstrap Gitea runner credentials
 # ============================================================================
 step_header 11 "Bootstrapping Gitea runner credentials"
 ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
@@ -326,7 +331,7 @@ kill ${PF_PID} 2>/dev/null || true
 trap - EXIT
 
 # ============================================================================
-# Step 11: Deploy Gitea runner infrastructure
+# Step 12: Deploy Gitea runner infrastructure
 # ============================================================================
 step_header 12 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
