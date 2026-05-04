@@ -11,5 +11,5 @@ data:
     repos:
       - id: /.*/
         workflow: default
-        allowed_overrides: []
+        allowed_overrides: [apply_requirements]
         allow_custom_workflows: false
