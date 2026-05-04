@@ -28,25 +28,39 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
+      initContainers:
+        - name: setup-gitconfig
+          image: alpine:latest
+          env:
+            - name: ATLANTIS_GITEA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: username
+            - name: ATLANTIS_GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: token
+          volumeMounts:
+            - name: gitconfig
+              mountPath: /tmp/gitconfig-dir
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              cfg=/tmp/gitconfig-dir/gitconfig
+              printf '[url "http://gitea-http.gitea.svc.cluster.local:3000/"]\n' > "$cfg"
+              printf '    insteadOf = https://git.open-ict.hu/\n' >> "$cfg"
+              printf '    insteadOf = https://%s@git.open-ict.hu/\n' "$ATLANTIS_GITEA_USER" >> "$cfg"
+              printf '    insteadOf = https://%s:%s@git.open-ict.hu/\n' "$ATLANTIS_GITEA_USER" "$ATLANTIS_GITEA_TOKEN" >> "$cfg"
+              printf '[credential "http://gitea-http.gitea.svc.cluster.local:3000"]\n' >> "$cfg"
+              printf '    helper = !f(){ echo username=$ATLANTIS_GITEA_USER; echo password=$ATLANTIS_GITEA_TOKEN; }; f\n' >> "$cfg"
+
       containers:
         - name: atlantis
           image: ghcr.io/runatlantis/atlantis:v0.42.0
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              git config --file /gitconfig \
-                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
-                https://${username}:${token}@git.open-ict.hu/
-
-              git config --file /gitconfig --add \
-                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
-                https://git.open-ict.hu/
-
-              git config --file /gitconfig \
-                credential.http://gitea-http.gitea.svc.cluster.local:3000.helper \
-                '!f(){ echo username=$username; echo password=$token; }; f'
-              exec /usr/local/bin/docker-entrypoint.sh server
 
           ports:
             - name: http
@@ -55,11 +69,17 @@ spec:
           env:
             - { name: ATLANTIS_DATA_DIR, value: /atlantis }
             - { name: ATLANTIS_PORT, value: "4141" }
-            - { name: ATLANTIS_ATLANTIS_URL, value: "https://atlantis.git.open-ict.hu" }
+            - {
+                name: ATLANTIS_ATLANTIS_URL,
+                value: "https://atlantis.git.open-ict.hu",
+              }
             - { name: ATLANTIS_REPO_ALLOWLIST, value: "git.open-ict.hu/*" }
-            - { name: ATLANTIS_GITEA_BASE_URL, value: "http://gitea-http.gitea.svc.cluster.local:3000" }
+            - {
+                name: ATLANTIS_GITEA_BASE_URL,
+                value: "http://gitea-http.gitea.svc.cluster.local:3000",
+              }
             - { name: ATLANTIS_REPO_CONFIG, value: /etc/atlantis/repos.yaml }
-            - { name: GIT_CONFIG_GLOBAL, value: /tmp/gitconfig }
+            - { name: GIT_CONFIG_GLOBAL, value: /tmp/gitconfig-dir/gitconfig }
             - name: ATLANTIS_GITEA_USER
               valueFrom:
                 secretKeyRef:
@@ -85,7 +105,10 @@ spec:
                 secretKeyRef:
                   name: garage-s3-credentials
                   key: secret-access-key
-            - { name: AWS_ENDPOINT_URL_S3, value: "http://garage.atlantis.svc.cluster.local:3900" }
+            - {
+                name: AWS_ENDPOINT_URL_S3,
+                value: "http://garage.atlantis.svc.cluster.local:3900",
+              }
             - { name: AWS_REGION, value: "garage" }
 
           livenessProbe:
@@ -111,6 +134,10 @@ spec:
               subPath: repos.yaml
               readOnly: true
 
+            - name: gitconfig
+              mountPath: /tmp/gitconfig-dir
+              readOnly: true
+
           resources:
             requests:
               cpu: 250m
@@ -125,18 +152,21 @@ spec:
             runAsGroup: 1000
             allowPrivilegeEscalation: false
             capabilities:
-              drop: [ "ALL" ]
+              drop: ["ALL"]
 
       volumes:
         - name: repos-config
           configMap:
             name: atlantis-repos
 
+        - name: gitconfig
+          emptyDir: {}
+
   volumeClaimTemplates:
     - metadata:
         name: data
       spec:
-        accessModes: [ "ReadWriteOnce" ]
+        accessModes: ["ReadWriteOnce"]
         resources:
           requests:
             storage: 5Gi
