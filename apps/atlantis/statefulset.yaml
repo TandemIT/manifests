@@ -76,6 +76,8 @@ spec:
                 name: ATLANTIS_GITEA_BASE_URL,
                 value: "http://gitea-http.gitea.svc.cluster.local:3000",
               }
+            - name: TF_VAR_gitea_base_url
+              value: "http://gitea-http.gitea.svc.cluster.local:3000"
             - { name: ATLANTIS_REPO_CONFIG, value: /etc/atlantis/repos.yaml }
             - { name: GIT_CONFIG_GLOBAL, value: /tmp/gitconfig-dir/gitconfig }
             - name: ATLANTIS_GITEA_USER
@@ -84,6 +86,11 @@ spec:
                   name: atlantis-vcs
                   key: username
             - name: ATLANTIS_GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlantis-vcs
+                  key: token
+            - name: TF_VAR_gitea_token
               valueFrom:
                 secretKeyRef:
                   name: atlantis-vcs
