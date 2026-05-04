@@ -35,12 +35,17 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              git config --file /tmp/gitconfig \
-                "url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf" \
-                "https://git.open-ict.hu/"
-              git config --file /tmp/gitconfig \
-                "credential.http://gitea-http.gitea.svc.cluster.local:3000.helper" \
-                '!f(){ echo username=$ATLANTIS_GITEA_USER; echo password=$ATLANTIS_GITEA_TOKEN; }; f'
+              git config --file /gitconfig \
+                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
+                https://${username}:${token}@git.open-ict.hu/
+
+              git config --file /gitconfig --add \
+                url.http://gitea-http.gitea.svc.cluster.local:3000/.insteadOf \
+                https://git.open-ict.hu/
+
+              git config --file /gitconfig \
+                credential.http://gitea-http.gitea.svc.cluster.local:3000.helper \
+                '!f(){ echo username=$username; echo password=$token; }; f'
               exec /usr/local/bin/docker-entrypoint.sh server
 
           ports:

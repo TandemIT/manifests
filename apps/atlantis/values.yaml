@@ -1,0 +1,127 @@
+# Deploy with: helm upgrade --install atlantis runatlantis/atlantis -n atlantis -f apps/atlantis/values.yaml
+
+atlantisUrl: "https://atlantis.git.open-ict.hu"
+orgAllowlist: "git.open-ict.hu/*"
+
+image:
+  tag: "v0.42.0"
+  pullPolicy: IfNotPresent
+
+repoConfig: |
+  ---
+  repos:
+  - id: /.*/
+    workflow: default
+    allowed_overrides: []
+    allow_custom_workflows: false
+
+# The init container writes the gitconfig (with runtime-expanded credentials) to a
+# shared emptyDir. GIT_CONFIG_GLOBAL then points Atlantis at that file so all three
+# insteadOf variants (bare, user@host, user:token@host) are covered.
+extraVolumes:
+  - name: gitconfig
+    emptyDir: {}
+
+extraVolumeMounts:
+  - name: gitconfig
+    mountPath: /tmp/gitconfig-dir
+    readOnly: true
+
+initContainers:
+  - name: setup-gitconfig
+    image: alpine:latest
+    env:
+      - name: ATLANTIS_GITEA_USER
+        valueFrom:
+          secretKeyRef:
+            name: atlantis-vcs
+            key: username
+      - name: ATLANTIS_GITEA_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: atlantis-vcs
+            key: token
+    volumeMounts:
+      - name: gitconfig
+        mountPath: /tmp/gitconfig-dir
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e
+        cfg=/tmp/gitconfig-dir/gitconfig
+        printf '[url "http://gitea-http.gitea.svc.cluster.local:3000/"]\n' > "$cfg"
+        printf '    insteadOf = https://git.open-ict.hu/\n' >> "$cfg"
+        printf '    insteadOf = https://%s@git.open-ict.hu/\n' "$ATLANTIS_GITEA_USER" >> "$cfg"
+        printf '    insteadOf = https://%s:%s@git.open-ict.hu/\n' "$ATLANTIS_GITEA_USER" "$ATLANTIS_GITEA_TOKEN" >> "$cfg"
+        printf '[credential "http://gitea-http.gitea.svc.cluster.local:3000"]\n' >> "$cfg"
+        printf '    helper = !f(){ echo username=$ATLANTIS_GITEA_USER; echo password=$ATLANTIS_GITEA_TOKEN; }; f\n' >> "$cfg"
+
+environment:
+  GIT_CONFIG_GLOBAL: "/tmp/gitconfig-dir/gitconfig"
+  ATLANTIS_GITEA_BASE_URL: "http://gitea-http.gitea.svc.cluster.local:3000"
+  AWS_ENDPOINT_URL_S3: "http://garage.atlantis.svc.cluster.local:3900"
+  AWS_REGION: "garage"
+
+environmentSecrets:
+  - name: ATLANTIS_GITEA_USER
+    secretKeyRef:
+      name: atlantis-vcs
+      key: username
+  - name: ATLANTIS_GITEA_TOKEN
+    secretKeyRef:
+      name: atlantis-vcs
+      key: token
+  - name: ATLANTIS_GITEA_WEBHOOK_SECRET
+    secretKeyRef:
+      name: atlantis-vcs
+      key: webhook-secret
+  - name: AWS_ACCESS_KEY_ID
+    secretKeyRef:
+      name: garage-s3-credentials
+      key: access-key-id
+  - name: AWS_SECRET_ACCESS_KEY
+    secretKeyRef:
+      name: garage-s3-credentials
+      key: secret-access-key
+
+atlantisDataDirectory: /atlantis
+
+volumeClaim:
+  enabled: true
+  dataStorage: 5Gi
+  accessModes: ["ReadWriteOnce"]
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+statefulSet:
+  securityContext:
+    fsGroup: 1000
+    runAsUser: 1000
+    fsGroupChangePolicy: "OnRootMismatch"
+    seccompProfile:
+      type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+serviceAccount:
+  create: true
+
+service:
+  type: ClusterIP
+  port: 4141
+  targetPort: 4141
+
+ingress:
+  enabled: false
