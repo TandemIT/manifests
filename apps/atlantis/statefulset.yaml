@@ -50,12 +50,10 @@ spec:
             - |
               set -e
               cfg=/tmp/gitconfig-dir/gitconfig
-              printf '[url "http://gitea-http.gitea.svc.cluster.local:3000/"]\n' > "$cfg"
+              printf '[url "http://%s:%s@gitea-http.gitea.svc.cluster.local:3000/"]\n' "$ATLANTIS_GITEA_USER" "$ATLANTIS_GITEA_TOKEN" > "$cfg"
               printf '    insteadOf = https://git.open-ict.hu/\n' >> "$cfg"
               printf '    insteadOf = https://%s@git.open-ict.hu/\n' "$ATLANTIS_GITEA_USER" >> "$cfg"
               printf '    insteadOf = https://%s:%s@git.open-ict.hu/\n' "$ATLANTIS_GITEA_USER" "$ATLANTIS_GITEA_TOKEN" >> "$cfg"
-              printf '[credential "http://gitea-http.gitea.svc.cluster.local:3000"]\n' >> "$cfg"
-              printf '    helper = !f(){ echo username=$ATLANTIS_GITEA_USER; echo password=$ATLANTIS_GITEA_TOKEN; }; f\n' >> "$cfg"
 
       containers:
         - name: atlantis
