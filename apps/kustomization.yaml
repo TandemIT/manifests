@@ -8,3 +8,4 @@ resources:
   - anubis/
   - gitea/
   - gitea-runner/
+  - atlantis/
