@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitea-runner-config
+data:
+  config.yaml: |
+    log:
+      level: info
+
+    runner:
+      file: /data/.runner
+      capacity: 1
+      timeout: 3h
+      shutdown_timeout: 3600s
+      insecure: false
+      fetch_timeout: 5s
+      fetch_interval: 2s
+      fetch_interval_max: 60s
+
+    cache:
+      enabled: false
+
+    container:
+      network: ""
+      privileged: false
+      options: ""
+      workdir_parent: ""
+      valid_volumes:
+        - "**"
+      docker_host: tcp://127.0.0.1:2375
+      force_pull: true
+      force_rebuild: false
+      require_docker: true
+      docker_timeout: 300s
+      bind_workdir: false
+
+    metrics:
+      enabled: true
+      addr: 0.0.0.0:9101
