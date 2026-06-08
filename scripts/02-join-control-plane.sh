@@ -49,6 +49,7 @@ curl -sfL https://get.k3s.io | \
     --tls-san ${VIP} \
     --disable traefik \
     --disable servicelb \
+    --secrets-encryption \
     --write-kubeconfig-mode 600" \
   sh -
 
