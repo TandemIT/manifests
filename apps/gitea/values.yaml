@@ -8,7 +8,9 @@ deployment:
 image:
   registry: ""
   repository: gitea/gitea
-  tag: "1.23.8"
+  # Keep in sync with the chart's appVersion (chart 12.6.0 → Gitea 1.26.1),
+  # pinned in scripts/04-deploy-apps.sh.
+  tag: "1.26.1"
   pullPolicy: IfNotPresent
   rootless: true
 

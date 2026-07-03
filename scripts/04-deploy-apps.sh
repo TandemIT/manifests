@@ -176,7 +176,7 @@ if [[ "${OIDC_ENABLED}" == "true" ]]; then
   GITEA_OIDC_VALUES=(--values "${MANIFESTS_DIR}/apps/gitea/values-oidc.yaml")
 fi
 helm_upgrade_install gitea gitea/gitea gitea \
-  --version "~12.5" \
+  --version "12.6.0" \
   --values "${MANIFESTS_DIR}/apps/gitea/values.yaml" \
   "${GITEA_OIDC_VALUES[@]}" \
   --timeout 15m \
@@ -302,19 +302,30 @@ apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
 step_header 12 "Bootstrapping Garage S3 credentials"
 
 log "Waiting for Garage to be ready..."
-kubectl wait pod/garage-0 -n atlantis --for=condition=Ready --timeout=120s
+kubectl rollout status statefulset/garage -n atlantis --timeout=300s
 
-# Apply single-node cluster layout (idempotent: skip if already applied)
+# Connect the replicas into one Garage cluster.
+# Idempotent: "node connect" is a no-op for peers that are already known.
+GARAGE_REPLICAS=3
+for i in $(seq 1 $((GARAGE_REPLICAS - 1))); do
+  PEER_ID=$(kubectl exec -n atlantis "garage-${i}" -- /garage -c /etc/garage/garage.toml node id -q)
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml node connect "${PEER_ID}"
+done
+
+# Assign a layout role to every node that lacks one (fresh cluster: all three).
+# 50G per node with replication_factor=3 gives ~50G usable capacity.
 if kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
     | grep -q "NO ROLE ASSIGNED"; then
-  NODE_ID=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
-    | awk '/NO ROLE ASSIGNED/{print $1}')
+  for NODE_ID in $(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+      | awk '/NO ROLE ASSIGNED/{print $1}'); do
+    kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+      layout assign -z dc1 -c 50G "${NODE_ID}"
+  done
+  # Next layout version is always current + 1 (fresh cluster: 0 + 1).
+  CUR_LAYOUT=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml layout show 2>/dev/null \
+    | awk '/layout version:/{v=$NF} END{print v+0}')
   kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-    layout assign -z dc1 -c 1G "${NODE_ID}"
-  # --version 1 is always correct here: the enclosing if-guard only runs when
-  # no layout has ever been applied (Garage starts at layout version 0).
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-    layout apply --version 1
+    layout apply --version $((CUR_LAYOUT + 1))
   log "Applied Garage cluster layout"
 else
   log "Exists: Garage cluster layout"

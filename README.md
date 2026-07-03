@@ -6,7 +6,7 @@
 [![K3s](https://img.shields.io/badge/K3s-v1.32.3-blue?logo=kubernetes)](https://k3s.io)
 [![Traefik](https://img.shields.io/badge/Traefik-v3.3.4-blue?logo=traefikproxy)](https://traefik.io)
 [![MetalLB](https://img.shields.io/badge/MetalLB-v0.14.9-orange)](https://metallb.universe.tf)
-[![Gitea](https://img.shields.io/badge/Gitea-1.23.8-green?logo=gitea)](https://gitea.io)
+[![Gitea](https://img.shields.io/badge/Gitea-1.26.1-green?logo=gitea)](https://gitea.io)
 [![cert-manager](https://img.shields.io/badge/cert--manager-v1.15.3-blue)](https://cert-manager.io)
 [![KEDA](https://img.shields.io/badge/KEDA-v2.15.1-purple)](https://keda.sh)
 
@@ -149,7 +149,7 @@ Deployed via `scripts/04-deploy-apps.sh`. Order matters — cert-manager must be
 | -------------- | ------- | --------------- | -------------------------------------------- |
 | Traefik        | v3.3.4  | `traefik`       | Ingress controller + TCP proxy               |
 | cert-manager   | v1.15.3 | `cert-manager`  | Automated TLS certificates via Let's Encrypt |
-| Gitea          | 1.23.8  | `gitea`         | Self-hosted Git service with Actions support |
+| Gitea          | 1.26.1  | `gitea`         | Self-hosted Git service with Actions support |
 | PostgreSQL HA  | chart   | `gitea`         | Highly available database for Gitea          |
 | Valkey Cluster | chart   | `gitea`         | Distributed cache and session store          |
 | Act Runner     | 0.4.1   | `gitea-runners` | GitHub Actions-compatible CI/CD executor     |

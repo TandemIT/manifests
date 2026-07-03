@@ -33,3 +33,22 @@ spec:
     - name: s3
       port: 3900
       targetPort: 3900
+---
+# Headless service — gives each Garage pod a stable DNS name
+# (garage-N.garage-headless.atlantis.svc.cluster.local) for inter-node RPC.
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-headless
+  namespace: atlantis
+  labels:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/part-of: gitops
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: garage
+  ports:
+    - name: rpc
+      port: 3901
+      targetPort: 3901

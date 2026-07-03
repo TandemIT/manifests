@@ -7,17 +7,19 @@ metadata:
     app.kubernetes.io/name: garage
     app.kubernetes.io/part-of: gitops
 data:
-  # __RPC_SECRET__ is replaced at pod startup by the init container using the
-  # value from the garage-rpc Secret.  Do not change the placeholder token.
+  # __RPC_SECRET__ and __POD_NAME__ are replaced at pod startup by the init
+  # container (secret value from garage-rpc, pod name from the downward API).
+  # Do not change the placeholder tokens.
   garage.toml: |
     metadata_dir = "/data/meta"
     data_dir     = "/data/data"
     db_engine    = "lmdb"
 
-    replication_factor = 1
+    replication_factor = 3
 
-    rpc_bind_addr = "[::]:3901"
-    rpc_secret    = "__RPC_SECRET__"
+    rpc_bind_addr   = "[::]:3901"
+    rpc_public_addr = "__POD_NAME__.garage-headless.atlantis.svc.cluster.local:3901"
+    rpc_secret      = "__RPC_SECRET__"
 
     [s3_api]
     s3_region    = "garage"

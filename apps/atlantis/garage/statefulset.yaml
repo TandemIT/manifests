@@ -7,8 +7,8 @@ metadata:
     app.kubernetes.io/name: garage
     app.kubernetes.io/part-of: gitops
 spec:
-  serviceName: garage
-  replicas: 1
+  serviceName: garage-headless
+  replicas: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: garage
@@ -18,6 +18,15 @@ spec:
         app.kubernetes.io/name: garage
         app.kubernetes.io/part-of: gitops
     spec:
+      # One Garage node per Kubernetes node — a node failure must only take
+      # down one of the three replicas (replication_factor = 3).
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: garage
+              topologyKey: kubernetes.io/hostname
       securityContext:
         fsGroup: 1000
         seccompProfile:
@@ -28,13 +37,19 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              sed "s|__RPC_SECRET__|$RPC_SECRET|g" /tmpl/garage.toml > /config/garage.toml
+              sed -e "s|__RPC_SECRET__|$RPC_SECRET|g" \
+                  -e "s|__POD_NAME__|$POD_NAME|g" \
+                  /tmpl/garage.toml > /config/garage.toml
           env:
             - name: RPC_SECRET
               valueFrom:
                 secretKeyRef:
                   name: garage-rpc
                   key: rpc-secret
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           volumeMounts:
             - name: config-tmpl
               mountPath: /tmpl
@@ -67,11 +82,11 @@ spec:
               readOnly: true
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 250m
+              memory: 256Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "1"
+              memory: 1Gi
           readinessProbe:
             tcpSocket:
               port: s3
@@ -104,4 +119,6 @@ spec:
         accessModes: [ReadWriteOnce]
         resources:
           requests:
-            storage: 10Gi
+            # Sized for Gitea LFS/packages/CI artifacts + Terraform state.
+            # k3s local-path PVCs cannot be expanded in place — size generously.
+            storage: 50Gi
