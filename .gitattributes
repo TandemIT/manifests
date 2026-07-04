@@ -1,0 +1,7 @@
+# Scripts and manifests execute on Linux (nodes, WSL) - never check out CRLF.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.tf text eol=lf
+*.tftpl text eol=lf
+*.md text

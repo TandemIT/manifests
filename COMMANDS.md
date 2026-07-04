@@ -34,7 +34,27 @@ MetalLB manages LoadBalancer services (L2 mode):
 - This repository is cloned to the same path on every node (e.g. `/opt/manifests`).
 - Nodes run a supported Linux distro (Ubuntu 24.04 / Debian 12 recommended).
 - `curl`, `helm`, `python3` available on the deploy host.
-- Adjust `VIP`, `INTERFACE`, and version variables at the top of each script if needed.
+- Override `VIP` / `K3S_VERSION` via environment variables if needed; the
+  kube-vip network interface is auto-detected from the default route
+  (override with `VIP_INTERFACE`).
+
+---
+
+## Step 0 — Zero-touch alternative (Terraform + Ansible)
+
+If the nodes are Proxmox VMs, the whole flow below (including VM creation) is
+automated:
+
+```bash
+./setup.sh    # prereq check; creates terraform/terraform.tfvars from the example
+# edit terraform/terraform.tfvars, push local commits, then:
+./deploy.sh
+```
+
+`deploy.sh` provisions the VMs, generates `ansible/inventory.yml` from the
+Terraform variables, runs `scripts/01..03` on the right nodes via Ansible,
+fetches a kubeconfig (pointed at the VIP) to the repo root, and waits for the
+Argo CD applications to converge. Steps 1–4 below are the manual equivalent.
 
 ---
 

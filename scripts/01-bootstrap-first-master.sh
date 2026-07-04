@@ -34,9 +34,15 @@ step_header 1 "Installing node prerequisites"
 install_node_prerequisites
 
 step_header 2 "Placing kube-vip static pod"
+# The template pins eth0/172.16.69.50; rewrite for this node's actual uplink
+# (cloud images name it ens18/enp*) and the configured VIP.
+DEFAULT_IFACE="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
+VIP_INTERFACE="${VIP_INTERFACE:-${DEFAULT_IFACE:-eth0}}"
 mkdir -p "${STATIC_POD_DIR}"
-cp "${MANIFESTS_DIR}/platform/system/kube-vip.yaml" "${STATIC_POD_DIR}/kube-vip.yaml"
-log "kube-vip static pod placed at ${STATIC_POD_DIR}/kube-vip.yaml"
+sed -e "s|value: eth0|value: ${VIP_INTERFACE}|" \
+    -e "s|value: \"172.16.69.50\"|value: \"${VIP}\"|" \
+  "${MANIFESTS_DIR}/platform/system/kube-vip.yaml" > "${STATIC_POD_DIR}/kube-vip.yaml"
+log "kube-vip static pod placed (interface ${VIP_INTERFACE}, VIP ${VIP})"
 
 step_header 3 "Installing K3s ${K3S_VERSION} as first control plane"
 curl -sfL https://get.k3s.io | \

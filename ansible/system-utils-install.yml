@@ -1,0 +1,29 @@
+---
+- name: Install System Utilities on all nodes
+  hosts: all
+  become: true
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install QEMU guest agent
+      ansible.builtin.apt:
+        name: qemu-guest-agent
+        state: present
+
+    - name: Start and enable QEMU guest agent service
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        state: started
+        enabled: true
+
+    - name: Install micro editor
+      ansible.builtin.apt:
+        name: micro
+        state: present
+
+    - name: Display system utilities status
+      ansible.builtin.debug:
+        msg: 'System utilities installed: QEMU guest agent and micro editor'

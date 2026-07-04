@@ -1,3 +1,7 @@
+# Static-pod TEMPLATE - copied (not kubectl-applied) to each control plane's
+# pod-manifests directory by scripts/01 and 02, which rewrite vip_interface
+# (eth0 below) to the node's default-route interface and the VIP address to
+# the configured VIP. Edit those values here only to change the defaults.
 apiVersion: v1
 kind: Pod
 metadata:
