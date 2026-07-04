@@ -1,0 +1,89 @@
+# Connects the Garage replicas into one cluster, applies the layout, and
+# mints the S3 credentials for the Atlantis Terraform state backend — the
+# GitOps replacement for scripts/04-deploy-apps.sh steps 11–12.
+#
+# Wave ordering inside this app: Garage StatefulSet (wave 0) → this Job
+# (wave 1) → Atlantis StatefulSet (wave 2), so Atlantis only starts once
+# garage-s3-credentials exists. Idempotent: node connect is a no-op for known
+# peers, layout is skipped when every node has a role, credentials are
+# skipped when the secret exists. To force a re-run:
+#   kubectl delete job garage-bootstrap -n atlantis
+# and let Argo CD re-sync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: garage-bootstrap
+  labels:
+    app.kubernetes.io/name: garage-bootstrap
+    app.kubernetes.io/part-of: gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # Jobs are immutable — replace instead of patch when this manifest changes.
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 20
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: garage-bootstrap
+        app.kubernetes.io/part-of: gitops
+    spec:
+      serviceAccountName: garage-bootstrap
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: alpine/k8s:1.32.3
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              garage() {
+                local pod="$1"; shift
+                kubectl exec -n atlantis "${pod}" -- /garage -c /etc/garage/garage.toml "$@"
+              }
+
+              kubectl rollout status statefulset/garage -n atlantis --timeout=600s
+
+              # Connect the replicas into one Garage cluster.
+              REPLICAS=3
+              for i in $(seq 1 $((REPLICAS - 1))); do
+                peer=$(garage "garage-${i}" node id -q)
+                garage garage-0 node connect "${peer}"
+              done
+
+              # Assign a layout role to every node that lacks one.
+              # 50G per node with replication_factor=3 gives ~50G usable.
+              if garage garage-0 status 2>/dev/null | grep -q "NO ROLE ASSIGNED"; then
+                for node_id in $(garage garage-0 status 2>/dev/null | awk '/NO ROLE ASSIGNED/{print $1}'); do
+                  garage garage-0 layout assign -z dc1 -c 50G "${node_id}"
+                done
+                cur=$(garage garage-0 layout show 2>/dev/null | awk '/layout version:/{v=$NF} END{print v+0}')
+                garage garage-0 layout apply --version $((cur + 1))
+                echo "Applied Garage cluster layout"
+              else
+                echo "Exists: Garage cluster layout"
+              fi
+
+              if ! kubectl get secret garage-s3-credentials -n atlantis >/dev/null 2>&1; then
+                key_info=$(garage garage-0 key create atlantis-tf)
+                access_key=$(echo "${key_info}" | awk '/^Key ID:/{print $3}')
+                secret_key=$(echo "${key_info}" | awk '/^Secret key:/{print $3}')
+                [ -n "${access_key}" ] && [ -n "${secret_key}" ]
+
+                garage garage-0 bucket create terraform-state || true
+                garage garage-0 bucket allow --read --write --owner terraform-state --key "${access_key}"
+
+                kubectl create secret generic garage-s3-credentials -n atlantis \
+                  --from-literal=access-key-id="${access_key}" \
+                  --from-literal=secret-access-key="${secret_key}"
+                echo "Created: atlantis/garage-s3-credentials"
+              else
+                echo "Exists: atlantis/garage-s3-credentials"
+              fi
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

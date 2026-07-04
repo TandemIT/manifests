@@ -6,6 +6,10 @@ metadata:
   labels:
     app.kubernetes.io/name: atlantis
     app.kubernetes.io/part-of: gitops
+  annotations:
+    # Wave 2: sync after Garage (wave 0) and the garage-bootstrap Job
+    # (wave 1), so garage-s3-credentials exists before the pod starts.
+    argocd.argoproj.io/sync-wave: "2"
 
 spec:
   serviceName: atlantis

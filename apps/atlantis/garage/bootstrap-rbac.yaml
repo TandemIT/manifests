@@ -1,0 +1,52 @@
+# RBAC for the garage-bootstrap Job: exec into the Garage pods to drive the
+# garage CLI, and create the S3 credentials secret for Atlantis.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: garage-bootstrap
+  labels:
+    app.kubernetes.io/name: garage-bootstrap
+    app.kubernetes.io/part-of: gitops
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: garage-bootstrap
+  labels:
+    app.kubernetes.io/name: garage-bootstrap
+    app.kubernetes.io/part-of: gitops
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # kubectl rollout status on the garage StatefulSet
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch"]
+  # create cannot be restricted by resourceName
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["garage-s3-credentials"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: garage-bootstrap
+  labels:
+    app.kubernetes.io/name: garage-bootstrap
+    app.kubernetes.io/part-of: gitops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: garage-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: garage-bootstrap
+    namespace: atlantis

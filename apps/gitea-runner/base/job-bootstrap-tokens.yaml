@@ -1,0 +1,82 @@
+# Mints the runner registration token and the KEDA API token against the
+# live Gitea API — the GitOps replacement for scripts/04-deploy-apps.sh step 9.
+#
+# Syncs at wave 0 (with the namespace and RBAC); the runner Deployment and
+# ScaledObject are wave 1, so they only start once real tokens exist. The Job
+# is idempotent: it no-ops when both secrets already hold non-placeholder
+# values. To force a re-mint (e.g. after revoking the tokens in Gitea):
+#   kubectl delete secret gitea-api-token gitea-runner-registration -n gitea-runners
+#   kubectl delete job runner-token-bootstrap -n gitea-runners
+# and let Argo CD re-sync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: runner-token-bootstrap
+  labels:
+    app.kubernetes.io/name: runner-token-bootstrap
+  annotations:
+    # Jobs are immutable — replace instead of patch when this manifest changes.
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 20
+  # Generous ceiling: on a fresh cluster this Job waits for Gitea to come up.
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: runner-token-bootstrap
+    spec:
+      serviceAccountName: runner-token-bootstrap
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: alpine/k8s:1.32.3
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              GITEA=http://gitea-http.gitea.svc.cluster.local:3000
+              echo "Waiting for the Gitea API..."
+              until curl -sf "${GITEA}/api/healthz" >/dev/null; do sleep 5; done
+
+              ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
+              ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
+
+              current=$(kubectl get secret gitea-runner-registration -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
+              case "${current}" in
+                ""|placeholder*)
+                  token=$(curl -sf -u "${ADMIN_USER}:${ADMIN_PASS}" \
+                    "${GITEA}/api/v1/admin/runners/registration-token" | jq -r .token)
+                  [ -n "${token}" ] && [ "${token}" != "null" ]
+                  kubectl create secret generic gitea-runner-registration \
+                    --from-literal=token="${token}" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                  echo "Minted: gitea-runner-registration"
+                  ;;
+                *) echo "Exists: gitea-runner-registration" ;;
+              esac
+
+              current=$(kubectl get secret gitea-api-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
+              case "${current}" in
+                ""|placeholder*)
+                  # Drop a stale token of the same name so re-mints don't 409.
+                  curl -sf -X DELETE -u "${ADMIN_USER}:${ADMIN_PASS}" \
+                    "${GITEA}/api/v1/users/${ADMIN_USER}/tokens/keda-scaler" || true
+                  token=$(curl -sf -X POST -u "${ADMIN_USER}:${ADMIN_PASS}" \
+                    -H 'Content-Type: application/json' \
+                    -d '{"name":"keda-scaler","scopes":["read:admin"]}' \
+                    "${GITEA}/api/v1/users/${ADMIN_USER}/tokens" | jq -r .sha1)
+                  [ -n "${token}" ] && [ "${token}" != "null" ]
+                  kubectl create secret generic gitea-api-token \
+                    --from-literal=token="${token}" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                  echo "Minted: gitea-api-token"
+                  ;;
+                *) echo "Exists: gitea-api-token" ;;
+              esac
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

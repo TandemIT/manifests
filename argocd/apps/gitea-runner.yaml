@@ -1,7 +1,6 @@
-# Act Runner + KEDA ScaledObject. Runners stay at the placeholder secrets
-# (created by scripts/01-bootstrap-first-master.sh) until the runtime tokens
-# are minted against the live Gitea API — see scripts/04-deploy-apps.sh
-# step 9 or COMMANDS.md.
+# Act Runner + KEDA ScaledObject. The runtime tokens are minted against the
+# live Gitea API by the in-app runner-token-bootstrap Job (wave 0); the
+# Deployment and ScaledObject sync at wave 1, after real tokens exist.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

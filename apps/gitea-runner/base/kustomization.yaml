@@ -10,6 +10,8 @@ commonAnnotations:
 resources:
   - namespace.yaml
   - serviceaccount.yaml
+  - bootstrap-rbac.yaml
+  - job-bootstrap-tokens.yaml
   - configmap.yaml
   - service.yaml
   - deployment.yaml

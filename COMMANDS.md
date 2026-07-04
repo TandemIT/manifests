@@ -171,21 +171,45 @@ The script re-applies RBAC, kured, MetalLB config, KEDA, and Longhorn in order.
 
 ## Secrets (Day-2)
 
+Static secrets live in git as SealedSecrets (encrypted with the cluster's
+sealed-secrets key, synced by Argo CD). `scripts/06-seal-secrets.sh` seals
+them all on first run; to **rotate** one, delete its `sealedsecret-*.yaml`
+file and re-run the script, or reseal by hand:
+
 ```bash
 # Update the Gitea OIDC provider credentials:
 kubectl create secret generic gitea-oidc \
   --namespace gitea \
   --from-literal=key="<CLIENT_ID>" \
   --from-literal=secret="<CLIENT_SECRET>" \
-  --from-literal=discoveryURL="<DISCOVERY_URL>" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets-cert.pem --format yaml \
+  > apps/gitea/sealedsecret-gitea-oidc.yaml
+# then: git commit + push — Argo CD applies it on sync.
 
 # Rotate the Anubis signing key (causes all active challenge cookies to expire):
-kubectl create secret generic anubis-key \
-  --namespace anubis \
-  --from-literal=ED25519_PRIVATE_KEY_HEX="$(openssl rand -hex 32)" \
-  --dry-run=client -o yaml | kubectl apply -f -
+rm apps/anubis/sealedsecret-anubis-key.yaml
+kubectl delete secret anubis-key -n anubis
+bash scripts/06-seal-secrets.sh   # reseals with a fresh random key
+git add -A && git commit && git push
 kubectl rollout restart deployment/anubis -n anubis
+```
+
+Runtime tokens are **not** in git — they are minted in-cluster by bootstrap
+Jobs (`runner-token-bootstrap` in gitea-runners, `garage-bootstrap` in
+atlantis). To re-mint, delete the secret and the Job, then let Argo CD sync:
+
+```bash
+kubectl delete secret gitea-api-token gitea-runner-registration -n gitea-runners
+kubectl delete job runner-token-bootstrap -n gitea-runners
+```
+
+**Back up the sealing key** (store off-cluster; restore it before the
+sealed-secrets app syncs on a rebuilt cluster):
+
+```bash
+kubectl get secret -n kube-system \
+  -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealing-key-backup.yaml
 ```
 
 ---

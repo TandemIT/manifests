@@ -10,3 +10,5 @@ resources:
   - statefulset.yaml
   - service.yaml
   - networkpolicy.yaml
+  - bootstrap-rbac.yaml
+  - job-bootstrap.yaml

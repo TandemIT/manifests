@@ -5,6 +5,10 @@ metadata:
   labels:
     app.kubernetes.io/name: gitea-runner
     app.kubernetes.io/part-of: ci-runners
+  annotations:
+    # Wave 1: sync only after the runner-token-bootstrap Job (wave 0) has
+    # minted the KEDA API token.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   scaleTargetRef:
     name: gitea-runner

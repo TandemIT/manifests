@@ -5,6 +5,7 @@ kind: Kustomization
 # Gitea application is deployed via: helm upgrade --install gitea gitea/gitea -f apps/gitea/values.yaml
 resources:
   - namespace.yaml
+  - rbac-runner-bootstrap.yaml
   - middleware.yaml
   - ingressroute-tcp.yaml
   - networkpolicy.yaml
