@@ -239,7 +239,7 @@ until curl -sf "http://localhost:13000/api/healthz" >/dev/null 2>&1; do sleep 3;
 
 if kubectl get secret gitea-runner-registration -n gitea-runners -o jsonpath='{.data.token}' \
     | base64 -d | grep -q "^placeholder"; then
-  REG_TOKEN=$(curl -sf \
+  REG_TOKEN=$(curl -sf -X POST \
     -u "${ADMIN_USER}:${ADMIN_PASS}" \
     "http://localhost:13000/api/v1/admin/actions/runners/registration-token" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")

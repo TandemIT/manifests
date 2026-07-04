@@ -45,7 +45,7 @@ spec:
               current=$(kubectl get secret gitea-runner-registration -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
               case "${current}" in
                 ""|placeholder*)
-                  token=$(curl -sf -u "${ADMIN_USER}:${ADMIN_PASS}" \
+                  token=$(curl -sf -X POST -u "${ADMIN_USER}:${ADMIN_PASS}" \
                     "${GITEA}/api/v1/admin/actions/runners/registration-token" | jq -r .token)
                   [ -n "${token}" ] && [ "${token}" != "null" ]
                   kubectl create secret generic gitea-runner-registration \
