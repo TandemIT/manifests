@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# kured - automatic node reboot manager (weekdays 02:00-05:00)
+resources:
+  - rbac.yaml
+  - daemonset.yaml

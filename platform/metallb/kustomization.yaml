@@ -2,8 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Upstream release manifest (includes the metallb-system namespace and CRDs)
-# plus our IP pool configuration. Deployed by the wave-1 "platform"
-# Application; Traefik (wave 2) waits on it for its LoadBalancer IP.
+# plus our IP pool configuration. Applied at bootstrap by
+# scripts/01-bootstrap-first-master.sh - NOT managed by Argo CD - so the
+# LoadBalancer VIP exists before Traefik (wave 2) asks for it.
 resources:
   - https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
   - ipaddresspool.yaml

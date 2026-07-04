@@ -5,10 +5,14 @@
 # This script does only what Argo CD cannot do for itself:
 #   1. Node prerequisites + kube-vip static pod (control-plane HA)
 #   2. K3s cluster init
-#   3. Bootstrap secrets (random material that must never live in git)
-#   4. Argo CD installation + the root app-of-apps
-# Everything else (MetalLB, KEDA, kured, Traefik, cert-manager, Gitea, ...)
-# is deployed by Argo CD from the argocd/apps/ Applications.
+#   3. Network foundation (platform/): MetalLB + IP pool, CoreDNS override.
+#      Deliberately outside Argo CD so the cluster's addresses are in place
+#      and verifiable before GitOps starts, and so MetalLB can be tuned
+#      without self-heal reverting changes.
+#   4. Bootstrap secrets (random material that must never live in git)
+#   5. Argo CD installation + the root app-of-apps
+# Everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...) is
+# deployed by Argo CD from the argocd/apps/ Applications.
 
 set -euo pipefail
 
@@ -53,13 +57,27 @@ done
 log "Node is Ready"
 
 # ============================================================================
-# Step 5: Bootstrap secrets
+# Step 5: Network foundation (MetalLB + CoreDNS override)
+# Applied directly - not via Argo CD - so the VIPs the whole stack depends on
+# exist and can be verified before GitOps takes over. The first apply may
+# fail partially: the IPAddressPool/L2Advertisement need MetalLB's validating
+# webhook, which isn't up yet. Wait for the controller, then re-apply.
+# ============================================================================
+step_header 5 "Deploying network foundation (platform/)"
+kubectl apply -k "${MANIFESTS_DIR}/platform" || \
+  log "First pass incomplete (MetalLB webhook not ready) - re-applying after rollout"
+kubectl rollout status deployment/controller -n metallb-system --timeout=180s
+kubectl apply -k "${MANIFESTS_DIR}/platform"
+log "MetalLB + CoreDNS override applied from platform/"
+
+# ============================================================================
+# Step 6: Bootstrap secrets
 # Argo CD can sync manifests but cannot invent secret material. These are
 # generated once here and never overwritten; the runner/API tokens start as
 # placeholders because they can only be minted against a running Gitea
 # (see scripts/04-deploy-apps.sh step 9).
 # ============================================================================
-step_header 5 "Generating bootstrap secrets"
+step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis atlantis; do
   ensure_namespace "${ns}"
 done
@@ -101,9 +119,9 @@ for secret in gitea-runner-registration gitea-api-token; do
 done
 
 # ============================================================================
-# Step 6: Install Argo CD and hand over to git
+# Step 7: Install Argo CD and hand over to git
 # ============================================================================
-step_header 6 "Installing Argo CD"
+step_header 7 "Installing Argo CD"
 apply_kustomization "${MANIFESTS_DIR}/argocd/install"
 
 log "Waiting for Argo CD to be ready..."
@@ -111,7 +129,7 @@ kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
 kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=300s
 kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
 
-step_header 7 "Applying root app-of-apps"
+step_header 8 "Applying root app-of-apps"
 kubectl apply -f "${MANIFESTS_DIR}/argocd/root-app.yaml"
 log "Argo CD now reconciles the cluster from git (argocd/apps/)"
 

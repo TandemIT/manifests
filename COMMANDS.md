@@ -49,11 +49,10 @@ This script:
 
 1. Copies the kube-vip static pod to `/var/lib/rancher/k3s/agent/pod-manifests/`
 2. Installs K3s with `--cluster-init`
-3. Applies RBAC and kured
-4. Installs MetalLB and applies the IP pool configuration from `platform/metallb/`
-5. Installs KEDA
-6. Installs Longhorn distributed storage
-7. Prints the join token and commands for the remaining nodes
+3. Applies the network foundation from `platform/` (MetalLB + IP pool, CoreDNS override) — directly via `kubectl apply -k`, outside Argo CD
+4. Generates the bootstrap secrets
+5. Installs Argo CD and applies the root app-of-apps — from here Argo CD deploys everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...)
+6. Prints the join token and commands for the remaining nodes
 
 Save the printed `NODE_TOKEN` — you need it for all other nodes.
 
@@ -156,12 +155,17 @@ kubectl apply -k platform/metallb/
 
 ## Updating platform components (Day-2)
 
+The network foundation under `platform/` is deliberately **not** managed by
+Argo CD — it defines the cluster's addresses and is applied imperatively so it
+can be tuned and verified without self-heal interfering:
+
 ```bash
-# After changing anything under platform/:
-bash scripts/06-sync-platform.sh
+# After changing anything under platform/ (MetalLB pool, CoreDNS override):
+kubectl apply -k platform/
 ```
 
-The script re-applies RBAC, kured, MetalLB config, KEDA, and Longhorn in order.
+Everything else (KEDA, kured, Traefik, ...) is reconciled by Argo CD — just
+commit and push.
 
 > **kube-vip exception** — it is a static pod, not managed by kubectl. If you change
 > `platform/system/kube-vip.yaml`, copy it manually to each control plane node:
@@ -260,13 +264,12 @@ kubectl get secret gitea-api-token -n gitea-runners -o jsonpath='{.data.token}' 
 
 ## kured reboot window
 
-Edit [platform/system/kured.yaml](platform/system/kured.yaml) to change the maintenance window.
+Edit [apps/kured/daemonset.yaml](apps/kured/daemonset.yaml) to change the maintenance window.
 
 Default: Mon–Fri, 02:00–05:00 local time, checked every hour.
 
-```bash
-kubectl apply -k platform/system/
-```
+kured is managed by Argo CD (the `kured` Application) — commit and push, and
+it reconciles automatically.
 
 ---
 

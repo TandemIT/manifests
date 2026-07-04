@@ -1,10 +1,11 @@
-# Platform layer: RBAC, kured, MetalLB, KEDA, CoreDNS customization.
-# First wave — Traefik (wave 2) needs MetalLB to hand out its LoadBalancer IP,
-# and the runner ScaledObject (wave 6) needs the KEDA CRDs.
+# KEDA operator - wave 1 so its CRDs exist before the runner ScaledObject
+# (wave 6) syncs. Split out of the former monolithic "platform" Application;
+# the network foundation (MetalLB, CoreDNS) is now applied at bootstrap by
+# scripts/01-bootstrap-first-master.sh, outside Argo CD.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: platform
+  name: keda
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "1"
@@ -15,7 +16,7 @@ spec:
   source:
     repoURL: https://github.com/TandemIT/manifests.git
     targetRevision: master
-    path: platform
+    path: apps/keda
   destination:
     server: https://kubernetes.default.svc
   syncPolicy:

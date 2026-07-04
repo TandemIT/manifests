@@ -42,7 +42,12 @@ This repository contains all Kubernetes manifests needed to deploy and operate a
 | Control-plane HA           | kube-vip (ARP)                         |
 | Automated node maintenance | kured                                  |
 
-Everything is managed through **Kustomize** with **Helm** used solely for the Gitea application chart. Deployments are driven by **Argo CD** using the app-of-apps pattern: `scripts/01-bootstrap-first-master.sh` installs Argo CD alongside the cluster itself and applies the root Application (`argocd/root-app.yaml`); everything else — MetalLB, KEDA, Traefik, cert-manager, Gitea, runners, Atlantis — is reconciled from git via the Applications in `argocd/apps/`. The shell scripts only cover what a GitOps controller cannot do: node bootstrap, secret generation, and one-time runtime initialization (runner tokens, Garage layout).
+Everything is managed through **Kustomize** with **Helm** used solely for the Gitea application chart. The cluster is split into two ownership layers:
+
+- **Network foundation (`platform/`)** — kube-vip, MetalLB + IP pool, and the CoreDNS override. This layer defines the cluster's addresses and is applied imperatively by `scripts/01-bootstrap-first-master.sh` (`kubectl apply -k platform/`), *not* by Argo CD. That keeps it verifiable before GitOps starts and tunable without self-heal reverting changes; day-2 changes are a re-run of the same apply.
+- **Everything above it** — driven by **Argo CD** using the app-of-apps pattern: the bootstrap script installs Argo CD and applies the root Application (`argocd/root-app.yaml`); KEDA, kured, Traefik, cert-manager, Gitea, runners, and Atlantis are reconciled from git via the Applications in `argocd/apps/`.
+
+The shell scripts only cover what a GitOps controller cannot do: node bootstrap, the network foundation, secret generation, and one-time runtime initialization (runner tokens, Garage layout).
 
 ---
 
@@ -129,31 +134,31 @@ Pod-to-pod DNS resolution for `git.open-ict.hu` is solved with **hostAliases** i
 
 ## Component Stack
 
-### Platform Layer
+### Platform Layer (bootstrap-owned, outside Argo CD)
 
-K3s, kube-vip, and Argo CD are installed by `scripts/01-bootstrap-first-master.sh`; the rest is deployed by Argo CD (wave-1 `platform` Application syncing `platform/`).
+Installed by `scripts/01-bootstrap-first-master.sh`: K3s and kube-vip on the node itself, then the network foundation from `platform/` via `kubectl apply -k`, then Argo CD. Manifests live in git and the apply is idempotent — declarative, just not continuously reconciled.
 
-| Component | Version      | Namespace        | Purpose                                              |
-| --------- | ------------ | ---------------- | ---------------------------------------------------- |
-| K3s       | v1.32.3+k3s1 | —                | Lightweight Kubernetes distribution                  |
-| kube-vip  | v0.8.7       | `kube-system`    | Floating VIP for the Kubernetes API server           |
-| Argo CD   | v3.4.4       | `argocd`         | GitOps controller — reconciles this repo             |
-| MetalLB   | v0.14.9      | `metallb-system` | L2 load balancer for application services            |
-| kured     | v1.15.0      | `kube-system`    | Automated rolling node reboot (weekdays 02:00–05:00) |
-| KEDA      | v2.15.1      | `keda`           | Event-driven pod autoscaling                         |
+| Component | Version      | Namespace        | Purpose                                    |
+| --------- | ------------ | ---------------- | ------------------------------------------ |
+| K3s       | v1.32.3+k3s1 | —                | Lightweight Kubernetes distribution        |
+| kube-vip  | v0.8.7       | `kube-system`    | Floating VIP for the Kubernetes API server |
+| MetalLB   | v0.14.9      | `metallb-system` | L2 load balancer for application services  |
+| Argo CD   | v3.4.4       | `argocd`         | GitOps controller — reconciles this repo   |
 
-### Application Layer
+### Application Layer (Argo CD-managed)
 
-Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — cert-manager CRDs before the issuers, Traefik and MetalLB before anything that needs an IngressRoute or LoadBalancer IP, Gitea before the runners and Atlantis. `scripts/04-deploy-apps.sh` remains as the script-driven alternative and as the runtime-initialization reference (runner tokens, Garage layout).
+Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — KEDA CRDs before the runner ScaledObject, cert-manager CRDs before the issuers, Gitea before the runners and Atlantis. The network foundation (MetalLB VIP) already exists from bootstrap, so Traefik's LoadBalancer IP is available from the first sync. `scripts/04-deploy-apps.sh` remains as the script-driven alternative and as the runtime-initialization reference (runner tokens, Garage layout).
 
-| Component      | Version | Namespace       | Purpose                                      |
-| -------------- | ------- | --------------- | -------------------------------------------- |
-| Traefik        | v3.3.4  | `traefik`       | Ingress controller + TCP proxy               |
-| cert-manager   | v1.15.3 | `cert-manager`  | Automated TLS certificates via Let's Encrypt |
-| Gitea          | 1.26.1  | `gitea`         | Self-hosted Git service with Actions support |
-| PostgreSQL HA  | chart   | `gitea`         | Highly available database for Gitea          |
-| Valkey Cluster | chart   | `gitea`         | Distributed cache and session store          |
-| Act Runner     | 0.4.1   | `gitea-runners` | GitHub Actions-compatible CI/CD executor     |
+| Component      | Version | Namespace       | Purpose                                              |
+| -------------- | ------- | --------------- | ---------------------------------------------------- |
+| KEDA           | v2.15.1 | `keda`          | Event-driven pod autoscaling                         |
+| kured          | v1.15.0 | `kube-system`   | Automated rolling node reboot (weekdays 02:00–05:00) |
+| Traefik        | v3.3.4  | `traefik`       | Ingress controller + TCP proxy                       |
+| cert-manager   | v1.15.3 | `cert-manager`  | Automated TLS certificates via Let's Encrypt         |
+| Gitea          | 1.26.1  | `gitea`         | Self-hosted Git service with Actions support         |
+| PostgreSQL HA  | chart   | `gitea`         | Highly available database for Gitea                  |
+| Valkey Cluster | chart   | `gitea`         | Distributed cache and session store                  |
+| Act Runner     | 0.4.1   | `gitea-runners` | GitHub Actions-compatible CI/CD executor             |
 
 ---
 
@@ -328,9 +333,10 @@ Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
 ### Bootstrap order
 
 ```bash
-# 1. Initialize the first control-plane node: K3s + kube-vip + bootstrap
-#    secrets + Argo CD + root app-of-apps. From this point Argo CD deploys
-#    the entire platform and application stack from git.
+# 1. Initialize the first control-plane node: K3s + kube-vip + network
+#    foundation (MetalLB, CoreDNS) + bootstrap secrets + Argo CD + root
+#    app-of-apps. From this point Argo CD deploys the application stack
+#    from git; the network layer is already up and verifiable.
 bash scripts/01-bootstrap-first-master.sh
 
 # 2. Join the remaining control-plane nodes (run on master2, master3)
@@ -406,22 +412,22 @@ The GitOps control layer — the only directory Argo CD needs to be pointed at o
 
 - **install/**: Kustomization pinning the upstream Argo CD release manifest (plus the `argocd-cm` patch that restores the Application health check required for app-of-apps wave ordering). Applied once by `scripts/01-bootstrap-first-master.sh`; afterwards Argo CD manages its own installation from here.
 - **root-app.yaml**: The root Application (app-of-apps). Points at `argocd/apps/` — the single manifest the bootstrap script applies imperatively.
-- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `platform` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `gitea` (5, Helm chart with values from this repo) → `gitea-runner`, `atlantis` (6).
+- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `sealed-secrets` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `gitea` (5, Helm chart with values from this repo) → `gitea-runner`, `atlantis` (6). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
 
 ### platform/
 
-Holds all platform-level Kubernetes manifests and Kustomize overlays:
+The network foundation — everything that defines the cluster's addresses. Owned by the bootstrap scripts, **not** Argo CD: `scripts/01-bootstrap-first-master.sh` runs `kubectl apply -k platform/` before installing Argo CD, and day-2 changes are a re-run of the same command.
 
-- **metallb/**: Configures MetalLB for L2 load balancing and IP address pool management.
-- **system/**: Contains kube-vip static pod manifests for control-plane HA and kured for automated node reboots.
-- **rbac/**: RBAC policies for system daemons and controllers.
-- **keda/**: KEDA operator deployment and host alias patches for autoscaling.
-- **configs/**: Additional platform configuration overlays.
+- **metallb/**: MetalLB upstream manifest plus the L2 IP address pool and advertisement.
+- **coredns/**: CoreDNS override resolving `git.open-ict.hu` to the MetalLB VIP inside the cluster.
+- **system/kube-vip.yaml**: Static-pod template for control-plane HA — copied to each master's pod-manifests directory by the bootstrap/join scripts, never applied via the API server.
 
 ### apps/
 
 Contains application-specific Kubernetes manifests and Kustomize overlays:
 
+- **keda/**: KEDA operator (upstream release manifest + host-alias patch pointing `git.open-ict.hu` at the MetalLB VIP).
+- **kured/**: kured DaemonSet and RBAC for automated node reboots.
 - **traefik/**: Ingress controller configuration. The `base/` subdirectory includes deployment, service, RBAC, and IngressClass resources.
 - **cert-manager/**: PKI automation for TLS certificates. Includes `base/` for upstream release and `issuers/` for Let's Encrypt ClusterIssuers.
 - **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, and Valkey.

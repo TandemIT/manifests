@@ -1,9 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Network foundation - applied by scripts/01-bootstrap-first-master.sh
+# (kubectl apply -k), NOT by Argo CD. This layer defines the cluster's
+# addresses (MetalLB VIP, in-cluster DNS override) and must exist before
+# Argo CD starts syncing applications; keeping it out of the app-of-apps
+# also means no self-heal reverting changes while tuning L2/ARP behavior.
+#
+# kube-vip (system/kube-vip.yaml) is part of this layer too, but as a
+# static-pod template copied to the masters by the bootstrap scripts -
+# it provides the API VIP and can never be applied via the API server.
 resources:
-  - rbac/
-  - system/
   - metallb/
-  - keda/
   - coredns/

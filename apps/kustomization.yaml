@@ -1,8 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Apply Traefik first so the application ingresses and TCP routes have an ingress controller.
+# KEDA first (the runner ScaledObject needs its CRDs), then Traefik so the
+# application ingresses and TCP routes have an ingress controller.
 resources:
+  - keda/
+  - kured/
   - traefik/
   - cert-manager/
   - anubis/
