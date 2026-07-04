@@ -46,7 +46,7 @@ spec:
               case "${current}" in
                 ""|placeholder*)
                   token=$(curl -sf -u "${ADMIN_USER}:${ADMIN_PASS}" \
-                    "${GITEA}/api/v1/admin/runners/registration-token" | jq -r .token)
+                    "${GITEA}/api/v1/admin/actions/runners/registration-token" | jq -r .token)
                   [ -n "${token}" ] && [ "${token}" != "null" ]
                   kubectl create secret generic gitea-runner-registration \
                     --from-literal=token="${token}" \

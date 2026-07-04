@@ -241,7 +241,7 @@ if kubectl get secret gitea-runner-registration -n gitea-runners -o jsonpath='{.
     | base64 -d | grep -q "^placeholder"; then
   REG_TOKEN=$(curl -sf \
     -u "${ADMIN_USER}:${ADMIN_PASS}" \
-    "http://localhost:13000/api/v1/admin/runners/registration-token" \
+    "http://localhost:13000/api/v1/admin/actions/runners/registration-token" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
 
   if [[ -n "${REG_TOKEN}" ]]; then
