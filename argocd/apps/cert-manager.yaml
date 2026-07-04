@@ -17,7 +17,7 @@ spec:
   sources:
     - repoURL: https://charts.jetstack.io
       chart: cert-manager
-      # Same version the old static manifest pinned — bump deliberately.
+      # Keep in sync with the helm install in scripts/04-deploy-apps.sh.
       targetRevision: v1.15.3
       helm:
         releaseName: cert-manager

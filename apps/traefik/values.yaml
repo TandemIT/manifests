@@ -1,9 +1,7 @@
 # Values for the official traefik/traefik chart (version pinned in
-# argocd/apps/traefik.yaml and scripts/04-deploy-apps.sh). Reproduces the
-# previously vendored manifests: 2 replicas spread across nodes, entrypoints
-# web/websecure/ssh (names must not change — every IngressRoute references
-# them), MetalLB LoadBalancer without node ports, and the hardened non-root
-# defaults the chart already ships.
+# argocd/apps/traefik.yaml and scripts/04-deploy-apps.sh).
+# The entrypoint names web/websecure/ssh must not change — every IngressRoute
+# references them.
 
 image:
   # Pin the app version independently of the chart default.
@@ -14,8 +12,7 @@ deployment:
   podAnnotations:
     prometheus.io/scrape: "true"
     prometheus.io/path: /metrics
-    # The chart exposes metrics on the dedicated "metrics" entrypoint (9100),
-    # not on the traefik/api port the old manifests used.
+    # The chart exposes metrics on the dedicated "metrics" entrypoint.
     prometheus.io/port: "9100"
 
 affinity:

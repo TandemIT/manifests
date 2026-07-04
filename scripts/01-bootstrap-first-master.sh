@@ -62,13 +62,10 @@ until kubectl get nodes 2>/dev/null | grep -E "Ready\\s" | grep -v "NotReady" | 
 done
 log "Node is Ready"
 
-# ============================================================================
-# Step 5: Network foundation (MetalLB + CoreDNS override)
 # Applied directly - not via Argo CD - so the VIPs the whole stack depends on
-# exist and can be verified before GitOps takes over. The first apply may
-# fail partially: the IPAddressPool/L2Advertisement need MetalLB's validating
-# webhook, which isn't up yet. Wait for the controller, then re-apply.
-# ============================================================================
+# exist and can be verified before GitOps takes over. The first apply may fail
+# partially (IPAddressPool/L2Advertisement need MetalLB's validating webhook,
+# which isn't up yet); wait for the controller, then re-apply.
 step_header 5 "Deploying network foundation (platform/)"
 kubectl apply -k "${MANIFESTS_DIR}/platform" || \
   log "First pass incomplete (MetalLB webhook not ready) - re-applying after rollout"
@@ -76,13 +73,10 @@ kubectl rollout status deployment/controller -n metallb-system --timeout=180s
 kubectl apply -k "${MANIFESTS_DIR}/platform"
 log "MetalLB + CoreDNS override applied from platform/"
 
-# ============================================================================
-# Step 6: Bootstrap secrets
-# Argo CD can sync manifests but cannot invent secret material. These are
-# generated once here and never overwritten; the runner/API tokens start as
-# placeholders because they can only be minted against a running Gitea
-# (see scripts/04-deploy-apps.sh step 9).
-# ============================================================================
+# Argo CD can sync manifests but cannot invent secret material. Generated once
+# here and never overwritten; the runner/API tokens start as placeholders
+# because they can only be minted against a running Gitea (04-deploy-apps.sh
+# step 9).
 step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis atlantis; do
   ensure_namespace "${ns}"
@@ -124,9 +118,6 @@ for secret in gitea-runner-registration gitea-api-token; do
   fi
 done
 
-# ============================================================================
-# Step 7: Install Argo CD and hand over to git
-# ============================================================================
 step_header 7 "Installing Argo CD"
 # --server-side: the applicationsets.argoproj.io CRD's schema exceeds the
 # 262144-byte cap kubectl's client-side apply enforces on the

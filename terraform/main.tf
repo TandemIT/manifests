@@ -46,7 +46,6 @@ locals {
   ]
 }
 
-# Control Plane Nodes
 resource "proxmox_vm_qemu" "k3s_control_plane" {
   count = var.control_plane_count
 
@@ -86,7 +85,6 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
         }
       }
     }
-    # CloudInit drive
     scsi {
       scsi1 {
         cloudinit {
@@ -102,7 +100,7 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
     bridge = var.bridge
   }
 
-  # Serial port for console access
+  # Console access
   serial {
     id   = 0
     type = "socket"
@@ -126,7 +124,6 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   }
 }
 
-# Worker Nodes
 resource "proxmox_vm_qemu" "k3s_worker" {
   count = var.worker_count
 
@@ -166,7 +163,6 @@ resource "proxmox_vm_qemu" "k3s_worker" {
         }
       }
     }
-    # CloudInit drive
     scsi {
       scsi1 {
         cloudinit {
@@ -182,7 +178,7 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     bridge = var.bridge
   }
 
-  # Serial port for console access
+  # Console access
   serial {
     id   = 0
     type = "socket"

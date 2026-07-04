@@ -13,14 +13,10 @@
 
 set -euo pipefail
 
-# Source shared functions library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib-functions.sh
 source "${SCRIPT_DIR}/lib-functions.sh"
 
-# ============================================================================
-# Configuration
-# ============================================================================
 MANIFESTS_DIR="${SCRIPT_DIR}/.."
 
 # Ensure kubectl and helm target the same kubeconfig.
@@ -35,26 +31,17 @@ fi
 verify_kubeconfig
 log "Using kubeconfig: ${KUBECONFIG}"
 
-# ============================================================================
-# Step 1: Validate tooling and cluster access
-# ============================================================================
 step_header 1 "Validating tooling and cluster access"
 require_binary kubectl helm curl python3 openssl
 require_cluster
 
-# ============================================================================
-# Step 2: Ensure required namespaces exist
-# ============================================================================
 step_header 2 "Ensuring required namespaces exist"
 for ns in traefik cert-manager gitea gitea-runners anubis atlantis; do
   ensure_namespace "${ns}"
 done
 
-# ============================================================================
-# Step 3: Generate secrets
-# Note: atlantis-vcs is created in Step 10, after Gitea is running, so the
-# operator can create the bot account and obtain the API token first.
-# ============================================================================
+# atlantis-vcs is created in Step 10, after Gitea is running, so the operator
+# can create the bot account and obtain the API token first.
 step_header 3 "Generating secrets"
 
 if ! kubectl get secret gitea-admin -n gitea >/dev/null 2>&1; then
@@ -126,9 +113,6 @@ else
   fi
 fi
 
-# ============================================================================
-# Step 4: Deploy cert-manager
-# ============================================================================
 step_header 4 "Deploying cert-manager"
 apply_kustomization "${MANIFESTS_DIR}/apps/cert-manager"
 
@@ -154,9 +138,6 @@ kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-m
 log "Applying cert-manager ClusterIssuers..."
 apply_kustomization "${MANIFESTS_DIR}/apps/cert-manager/issuers"
 
-# ============================================================================
-# Step 5: Deploy Traefik
-# ============================================================================
 step_header 5 "Deploying Traefik"
 apply_kustomization "${MANIFESTS_DIR}/apps/traefik"
 
@@ -178,18 +159,12 @@ fi
 [[ -n "${TRAEFIK_DEPLOYMENT}" ]] || die "No Traefik deployment found in namespace traefik"
 kubectl rollout status deployment/"${TRAEFIK_DEPLOYMENT}" -n traefik --timeout=120s
 
-# ============================================================================
-# Step 6: Deploy Anubis
-# Anubis sits between Traefik and each protected backend (reverse proxy mode).
-# Deploy before Gitea so the IngressRoute and TLS certificate are ready first.
-# ============================================================================
+# Anubis sits between Traefik and each protected backend; deploy before Gitea
+# so the IngressRoute and TLS certificate are ready first.
 step_header 6 "Deploying Anubis"
 apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
 
-# ============================================================================
-# Step 7: Deploy Gitea
 # Must come before Atlantis — Atlantis connects to Gitea on startup.
-# ============================================================================
 step_header 7 "Deploying Gitea"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea"
 
@@ -208,9 +183,6 @@ helm_upgrade_install gitea gitea/gitea gitea \
   --timeout 15m \
   --wait
 
-# ============================================================================
-# Step 8: Wait for Gitea to be fully ready
-# ============================================================================
 step_header 8 "Waiting for Gitea to be ready"
 log "Waiting for Gitea PostgreSQL HA StatefulSet..."
 PG_SS=$(kubectl get statefulset -n gitea \
@@ -222,9 +194,6 @@ kubectl rollout status statefulset/"${PG_SS}" -n gitea --timeout=300s
 log "Waiting for Gitea deployment..."
 kubectl rollout status deployment/gitea -n gitea --timeout=180s
 
-# ============================================================================
-# Step 9: Bootstrap Gitea runner credentials
-# ============================================================================
 step_header 9 "Bootstrapping Gitea runner credentials"
 ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
 ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
@@ -282,11 +251,8 @@ fi
 kill ${PF_PID} 2>/dev/null || true
 trap - EXIT
 
-# ============================================================================
-# Step 10: Create Atlantis VCS secret
-# Gitea is now running — the operator can log in, create the bot account, and
-# generate an API token before this prompt appears.
-# ============================================================================
+# Gitea is now running — the operator can create the bot account and generate
+# an API token before this prompt appears.
 step_header 10 "Configuring Atlantis VCS credentials"
 
 if ! kubectl get secret atlantis-vcs -n atlantis >/dev/null 2>&1; then
@@ -311,20 +277,13 @@ else
   log "Exists: atlantis/atlantis-vcs"
 fi
 
-# ============================================================================
-# Step 11: Deploy Atlantis
-# Gitea is running and atlantis-vcs is populated — Atlantis can reach Gitea.
-# ============================================================================
+# Needs Gitea running and atlantis-vcs populated — Atlantis connects on startup.
 step_header 11 "Deploying Atlantis"
 apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
 
-# ============================================================================
-# Step 12: Bootstrap Garage S3 credentials
-# Garage must be running before we can create an access key, so this step
-# comes after the Atlantis kustomization (which also deploys Garage).
-# The Atlantis pod starts with CreateContainerConfigError until this secret
-# exists; once created, Kubernetes retries the pod automatically.
-# ============================================================================
+# Garage must be running before an access key can be created, hence after the
+# Atlantis kustomization (which also deploys Garage). The Atlantis pod sits in
+# CreateContainerConfigError until this secret exists, then retries automatically.
 step_header 12 "Bootstrapping Garage S3 credentials"
 
 log "Waiting for Garage to be ready..."
@@ -379,15 +338,9 @@ fi
 log "Waiting for Atlantis to be ready..."
 kubectl wait pod/atlantis-0 -n atlantis --for=condition=Ready --timeout=120s
 
-# ============================================================================
-# Step 13: Deploy Gitea runner infrastructure
-# ============================================================================
 step_header 13 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
 
-# ============================================================================
-# Deployment complete
-# ============================================================================
 section_header "Deployment Complete"
 echo ""
 echo "Runners start at 0 replicas and scale up when jobs are queued."

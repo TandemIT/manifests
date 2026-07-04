@@ -1,8 +1,7 @@
 # Traefik from the official chart — multi-source app: the chart from the
-# traefik repo, values + namespace from this repo. Replaces the previously
-# vendored raw manifests; the chart also owns the traefik.io CRDs now, so
-# they upgrade together with the release. Upgrading is a targetRevision bump
-# here + commit.
+# traefik repo, values + namespace from this repo. The chart owns the
+# traefik.io CRDs, so they upgrade together with the release. Upgrading is a
+# targetRevision bump here + commit.
 #
 # MIGRATION NOTE (one-time): the old Deployment used selector `app: traefik`,
 # the chart uses its own labels, and selectors are immutable. On first sync

@@ -2,7 +2,7 @@ gitea:
   oauth:
     - name: Authentik
       provider: openidConnect
-      existingSecret: gitea-oidc # Your secret is already bootstrapped
+      existingSecret: gitea-oidc # sealed by scripts/06-seal-secrets.sh
       autoDiscoverUrl: "https://auth.open-ict.hu/application/o/gitea/.well-known/openid-configuration"
       iconUrl: "https://auth.open-ict.hu/static/dist/assets/icons/icon.png"
       scopes: "email profile gitea"

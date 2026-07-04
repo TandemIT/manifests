@@ -1,7 +1,5 @@
 # KEDA operator - wave 1 so its CRDs exist before the runner ScaledObject
-# (wave 6) syncs. Split out of the former monolithic "platform" Application;
-# the network foundation (MetalLB, CoreDNS) is now applied at bootstrap by
-# scripts/01-bootstrap-first-master.sh, outside Argo CD.
+# (wave 6) syncs.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

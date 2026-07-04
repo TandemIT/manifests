@@ -70,7 +70,6 @@ variable "searchdomain" {
   default     = "local"
 }
 
-# Control Plane Configuration
 variable "control_plane_count" {
   description = "Number of control plane nodes (3 for etcd quorum / kube-vip HA)"
   type        = number
@@ -101,7 +100,6 @@ variable "control_plane_ip_start" {
   default     = "172.16.69.100"
 }
 
-# Worker Configuration
 variable "worker_count" {
   description = "Number of worker nodes"
   type        = number
@@ -132,7 +130,6 @@ variable "worker_ip_start" {
   default     = "172.16.69.150"
 }
 
-# K3s Configuration
 variable "k3s_version" {
   description = "K3s version to install (the repo's manifests are pinned against v1.32.3+k3s1)"
   type        = string

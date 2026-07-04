@@ -49,10 +49,6 @@ fi
 require_binary kubectl kubeseal openssl
 require_cluster
 
-# ============================================================================
-# Helpers
-# ============================================================================
-
 # Read a key from a live in-cluster secret; empty output when absent.
 live_value() {
   local name="$1" ns="$2" key="$3"
@@ -95,11 +91,8 @@ add_resource() {
   fi
 }
 
-# ============================================================================
-# Step 1: Fetch the sealing certificate
-# The cert is a public key — safe (and useful) to commit, so future sealing
-# works offline from any checkout.
-# ============================================================================
+# The cert is a public key — safe to commit, so future sealing works offline
+# from any checkout.
 step_header 1 "Fetching sealed-secrets public certificate"
 if [[ ! -f "${CERT}" ]]; then
   kubeseal --fetch-cert \
@@ -111,9 +104,6 @@ else
   log "Using cached certificate: ${CERT#"${MANIFESTS_DIR}"/}"
 fi
 
-# ============================================================================
-# Step 2: gitea-admin (initial Gitea login)
-# ============================================================================
 step_header 2 "Sealing gitea/gitea-admin"
 OUT="${MANIFESTS_DIR}/apps/gitea/sealedsecret-gitea-admin.yaml"
 if [[ -f "${OUT}" ]]; then
@@ -145,9 +135,6 @@ else
   fi
 fi
 
-# ============================================================================
-# Step 3: garage-rpc
-# ============================================================================
 step_header 3 "Sealing atlantis/garage-rpc"
 OUT="${MANIFESTS_DIR}/apps/atlantis/garage/sealedsecret-garage-rpc.yaml"
 if [[ -f "${OUT}" ]]; then
@@ -159,9 +146,6 @@ else
   add_resource "${MANIFESTS_DIR}/apps/atlantis/garage/kustomization.yaml" sealedsecret-garage-rpc.yaml
 fi
 
-# ============================================================================
-# Step 4: anubis-key
-# ============================================================================
 step_header 4 "Sealing anubis/anubis-key"
 OUT="${MANIFESTS_DIR}/apps/anubis/sealedsecret-anubis-key.yaml"
 if [[ -f "${OUT}" ]]; then
@@ -173,9 +157,7 @@ else
   add_resource "${MANIFESTS_DIR}/apps/anubis/kustomization.yaml" sealedsecret-anubis-key.yaml
 fi
 
-# ============================================================================
-# Step 5: gitea-oidc (optional — needs an Authentik OAuth2 provider)
-# ============================================================================
+# Optional — needs an Authentik OAuth2 provider.
 step_header 5 "Sealing gitea/gitea-oidc"
 OUT="${MANIFESTS_DIR}/apps/gitea/sealedsecret-gitea-oidc.yaml"
 OIDC_SEALED=false
@@ -206,9 +188,7 @@ else
   fi
 fi
 
-# ============================================================================
-# Step 6: atlantis-vcs (optional — needs a Gitea bot account + API token)
-# ============================================================================
+# Optional — needs a Gitea bot account + API token.
 step_header 6 "Sealing atlantis/atlantis-vcs"
 OUT="${MANIFESTS_DIR}/apps/atlantis/sealedsecret-atlantis-vcs.yaml"
 if [[ -f "${OUT}" ]]; then
@@ -243,9 +223,6 @@ else
   fi
 fi
 
-# ============================================================================
-# Done
-# ============================================================================
 section_header "Sealing complete"
 echo ""
 echo "Next steps:"

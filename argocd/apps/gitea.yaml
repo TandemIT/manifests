@@ -1,8 +1,6 @@
-# Gitea Helm chart, declaratively — replaces the imperative
-# `helm upgrade --install` in scripts/04-deploy-apps.sh. Multi-source app:
-# the chart comes from the Gitea Helm repo, the values file from this repo.
-# Requires the gitea-admin secret — sealed into git by scripts/06-seal-secrets.sh
-# (apps/gitea/sealedsecret-gitea-admin.yaml, synced by the gitea-config app).
+# Gitea Helm chart — multi-source app: the chart from the Gitea Helm repo,
+# the values file from this repo. Requires the gitea-admin secret — sealed
+# into git by scripts/06-seal-secrets.sh (synced by the gitea-config app).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
