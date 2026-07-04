@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Only the namespace lives here — the cert-manager workload comes from the
+# jetstack Helm chart (see argocd/apps/cert-manager.yaml).
 resources:
-  - base
+  - namespace.yaml

@@ -1,0 +1,6 @@
+# The chart does not create its namespace; this keeps it git-owned so Argo CD
+# never prunes it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: traefik

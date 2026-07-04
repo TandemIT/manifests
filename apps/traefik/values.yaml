@@ -1,0 +1,83 @@
+# Values for the official traefik/traefik chart (version pinned in
+# argocd/apps/traefik.yaml and scripts/04-deploy-apps.sh). Reproduces the
+# previously vendored manifests: 2 replicas spread across nodes, entrypoints
+# web/websecure/ssh (names must not change — every IngressRoute references
+# them), MetalLB LoadBalancer without node ports, and the hardened non-root
+# defaults the chart already ships.
+
+image:
+  # Pin the app version independently of the chart default.
+  tag: v3.3.4
+
+deployment:
+  replicas: 2
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics
+    # The chart exposes metrics on the dedicated "metrics" entrypoint (9100),
+    # not on the traefik/api port the old manifests used.
+    prometheus.io/port: "9100"
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: '{{ template "traefik.name" . }}'
+            app.kubernetes.io/instance: '{{ template "traefik.fullname" . }}-{{ .Release.Namespace }}'
+        topologyKey: kubernetes.io/hostname
+
+ingressClass:
+  enabled: true
+  # Keep explicit class selection; do not capture all Ingresses by default.
+  isDefaultClass: false
+
+providers:
+  kubernetesCRD:
+    enabled: true
+    ingressClass: traefik
+  kubernetesIngress:
+    enabled: true
+    ingressClass: traefik
+
+ports:
+  # Container ports stay high so Traefik runs as non-root; exposedPort is
+  # what the LoadBalancer Service publishes.
+  web:
+    port: 8000
+    exposedPort: 80
+  websecure:
+    port: 8443
+    exposedPort: 443
+    tls:
+      enabled: true
+  # Gitea SSH passthrough (IngressRouteTCP in apps/gitea/ targets this
+  # entrypoint by name).
+  ssh:
+    port: 2222
+    exposedPort: 2222
+    protocol: TCP
+    expose:
+      default: true
+
+service:
+  spec:
+    allocateLoadBalancerNodePorts: false
+
+logs:
+  general:
+    level: INFO
+  access:
+    enabled: true
+
+metrics:
+  prometheus:
+    enabled: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

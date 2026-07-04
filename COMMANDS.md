@@ -22,8 +22,9 @@ MetalLB manages LoadBalancer services (L2 mode):
 | MetalLB   | v0.14.9              |
 | kured     | v1.15.0              |
 | KEDA      | v2.15.1              |
-| Traefik   | v3.3.4               |
+| Traefik   | v3.3.4 (chart 34.4.1) |
 | Gitea     | 1.23.8 (chart ~12.5) |
+| cert-manager | v1.15.3 (chart)   |
 
 ---
 
@@ -229,6 +230,12 @@ helm upgrade gitea gitea/gitea \
   --values apps/gitea/values.yaml \
   --timeout 15m --wait
 ```
+
+Gitea, Traefik, and cert-manager are deployed from their official Helm charts
+by Argo CD (multi-source apps: chart from the upstream repo, values from this
+repo). Upgrading any of them = bump `targetRevision` in the matching
+`argocd/apps/*.yaml` (and the pinned version in `scripts/04-deploy-apps.sh`),
+edit the `apps/<name>/values.yaml` if needed, commit, push.
 
 ---
 

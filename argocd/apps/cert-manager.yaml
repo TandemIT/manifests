@@ -1,6 +1,8 @@
-# cert-manager core (upstream manifest + hostAliases patch). The
-# ClusterIssuers live in a separate wave-3 Application because they require
-# the cert-manager CRDs to be established and the webhook to be serving.
+# cert-manager from the official jetstack chart — multi-source app: the chart
+# from the jetstack repo, values + namespace from this repo. Upgrading is a
+# targetRevision bump here + commit. The ClusterIssuers live in a separate
+# wave-3 Application because they require the cert-manager CRDs to be
+# established and the webhook to be serving.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -12,10 +14,19 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/TandemIT/manifests.git
-    targetRevision: master
-    path: apps/cert-manager
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      # Same version the old static manifest pinned — bump deliberately.
+      targetRevision: v1.15.3
+      helm:
+        releaseName: cert-manager
+        valueFiles:
+          - $values/apps/cert-manager/values.yaml
+    - repoURL: https://github.com/TandemIT/manifests.git
+      targetRevision: master
+      ref: values
+      path: apps/cert-manager
   destination:
     server: https://kubernetes.default.svc
     namespace: cert-manager

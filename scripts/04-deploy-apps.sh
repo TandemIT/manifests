@@ -130,7 +130,16 @@ fi
 # Step 4: Deploy cert-manager
 # ============================================================================
 step_header 4 "Deploying cert-manager"
-apply_kustomization "${MANIFESTS_DIR}/apps/cert-manager/base"
+apply_kustomization "${MANIFESTS_DIR}/apps/cert-manager"
+
+log "Adding jetstack Helm repository..."
+helm_repo_add jetstack https://charts.jetstack.io
+
+# Keep the version in sync with argocd/apps/cert-manager.yaml.
+helm_upgrade_install cert-manager jetstack/cert-manager cert-manager \
+  --version "v1.15.3" \
+  --values "${MANIFESTS_DIR}/apps/cert-manager/values.yaml" \
+  --wait
 
 log "Waiting for cert-manager CRDs..."
 until kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1; do sleep 2; done
@@ -150,6 +159,14 @@ apply_kustomization "${MANIFESTS_DIR}/apps/cert-manager/issuers"
 # ============================================================================
 step_header 5 "Deploying Traefik"
 apply_kustomization "${MANIFESTS_DIR}/apps/traefik"
+
+log "Adding Traefik Helm repository..."
+helm_repo_add traefik https://traefik.github.io/charts
+
+# Keep the version in sync with argocd/apps/traefik.yaml.
+helm_upgrade_install traefik traefik/traefik traefik \
+  --version "34.4.1" \
+  --values "${MANIFESTS_DIR}/apps/traefik/values.yaml"
 
 log "Waiting for Traefik deployment..."
 if kubectl get deployment/traefik -n traefik >/dev/null 2>&1; then

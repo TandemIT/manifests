@@ -1,3 +1,15 @@
+# Traefik from the official chart — multi-source app: the chart from the
+# traefik repo, values + namespace from this repo. Replaces the previously
+# vendored raw manifests; the chart also owns the traefik.io CRDs now, so
+# they upgrade together with the release. Upgrading is a targetRevision bump
+# here + commit.
+#
+# MIGRATION NOTE (one-time): the old Deployment used selector `app: traefik`,
+# the chart uses its own labels, and selectors are immutable. On first sync
+# run on master1:
+#   kubectl delete deployment traefik -n traefik
+# Argo CD recreates it immediately (~30s ingress blip). The Service is
+# updated in place, so the MetalLB IP does not change.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -9,10 +21,20 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/TandemIT/manifests.git
-    targetRevision: master
-    path: apps/traefik
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      # Chart 34.x ships Traefik v3.3; the app version is pinned separately
+      # via image.tag in values.yaml.
+      targetRevision: 34.4.1
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/apps/traefik/values.yaml
+    - repoURL: https://github.com/TandemIT/manifests.git
+      targetRevision: master
+      ref: values
+      path: apps/traefik
   destination:
     server: https://kubernetes.default.svc
     namespace: traefik

@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Only the namespace lives here — the Traefik workload comes from the
+# official Helm chart (see argocd/apps/traefik.yaml).
 resources:
-  - base
+  - namespace.yaml
