@@ -128,7 +128,10 @@ done
 # Step 7: Install Argo CD and hand over to git
 # ============================================================================
 step_header 7 "Installing Argo CD"
-apply_kustomization "${MANIFESTS_DIR}/argocd/install"
+# --server-side: the applicationsets.argoproj.io CRD's schema exceeds the
+# 262144-byte cap kubectl's client-side apply enforces on the
+# last-applied-configuration annotation.
+apply_kustomization "${MANIFESTS_DIR}/argocd/install" --server-side --force-conflicts
 
 log "Waiting for Argo CD to be ready..."
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s

@@ -120,9 +120,10 @@ delete_namespace() {
 # Apply Kustomize overlay
 apply_kustomization() {
   local path="$1"
+  shift
   [[ -d "${path}" ]] || die "Kustomization path not found: ${path}"
   log "Applying: ${path}"
-  kubectl apply -k "${path}"
+  kubectl apply -k "${path}" "$@"
 }
 
 # ==============================================================================
