@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# Fully automated application deployment.
+# Fully automated application deployment (script-driven alternative).
 # Secrets are generated on first run and never overwritten on subsequent runs.
+#
+# The primary deployment path is Argo CD: scripts/01-bootstrap-first-master.sh
+# installs it and applies the root app-of-apps (argocd/), which deploys
+# everything in this repo declaratively. On the GitOps path this script is
+# only needed for the runtime pieces Argo CD cannot do:
+#   step 9      — mint runner registration + KEDA API tokens against live Gitea
+#   steps 10-12 — Atlantis VCS secret, Garage cluster layout, S3 credentials
+# Running the whole script against an Argo CD-managed cluster is safe:
+# resources it applies are adopted by Argo CD on the next sync.
 
 set -euo pipefail
 

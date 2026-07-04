@@ -1,0 +1,31 @@
+# Gitea infrastructure owned by kustomize: namespace, Traefik routes,
+# middleware, and NetworkPolicies. The Gitea workload itself is the Helm
+# chart in the wave-5 "gitea" Application.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitea-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TandemIT/manifests.git
+    targetRevision: master
+    path: apps/gitea
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitea
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

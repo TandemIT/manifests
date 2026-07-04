@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# Bootstrap the first K3s control-plane node.
+# Bootstrap the first K3s control-plane node and hand the cluster to Argo CD.
 # Run as root on master1 only. Other nodes use 02-join-control-plane.sh / 03-join-worker.sh.
+#
+# This script does only what Argo CD cannot do for itself:
+#   1. Node prerequisites + kube-vip static pod (control-plane HA)
+#   2. K3s cluster init
+#   3. Bootstrap secrets (random material that must never live in git)
+#   4. Argo CD installation + the root app-of-apps
+# Everything else (MetalLB, KEDA, kured, Traefik, cert-manager, Gitea, ...)
+# is deployed by Argo CD from the argocd/apps/ Applications.
 
 set -euo pipefail
 
@@ -10,8 +18,6 @@ source "${SCRIPT_DIR}/lib-functions.sh"
 
 VIP="${VIP:-172.16.69.50}"
 K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
-KEDA_VERSION="${KEDA_VERSION:-2.15.1}"
-METALLB_VERSION="${METALLB_VERSION:-v0.14.9}"
 
 MANIFESTS_DIR="${SCRIPT_DIR}/.."
 STATIC_POD_DIR="/var/lib/rancher/k3s/agent/pod-manifests"
@@ -46,30 +52,72 @@ until kubectl get nodes 2>/dev/null | grep -E "Ready\\s" | grep -v "NotReady" | 
 done
 log "Node is Ready"
 
-step_header 5 "Applying RBAC"
-apply_kustomization "${MANIFESTS_DIR}/platform/rbac/"
+# ============================================================================
+# Step 5: Bootstrap secrets
+# Argo CD can sync manifests but cannot invent secret material. These are
+# generated once here and never overwritten; the runner/API tokens start as
+# placeholders because they can only be minted against a running Gitea
+# (see scripts/04-deploy-apps.sh step 9).
+# ============================================================================
+step_header 5 "Generating bootstrap secrets"
+for ns in gitea gitea-runners anubis atlantis; do
+  ensure_namespace "${ns}"
+done
 
-step_header 6 "Installing kured"
-apply_kustomization "${MANIFESTS_DIR}/platform/system/"
+if ! kubectl get secret gitea-admin -n gitea >/dev/null 2>&1; then
+  kubectl create secret generic gitea-admin -n gitea \
+    --from-literal=username=gitea-admin \
+    --from-literal=password="$(openssl rand -hex 24)" \
+    --from-literal=email=admin@example.com
+  log "Created: gitea/gitea-admin"
+else
+  log "Exists: gitea/gitea-admin"
+fi
 
-# MetalLB must be applied after CNI is ready and before applications request LoadBalancer IPs.
-# The controller deployment is installed from the official release manifest; the IP pool
-# configuration (IPAddressPool + L2Advertisement) lives in platform/metallb/.
-step_header 7 "Installing MetalLB ${METALLB_VERSION}"
-kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml"
-log "Waiting for MetalLB controller..."
-kubectl rollout status deployment/controller -n metallb-system --timeout=120s
-log "Applying MetalLB IP pool configuration"
-kubectl apply -k "${MANIFESTS_DIR}/platform/metallb/"
+if ! kubectl get secret garage-rpc -n atlantis >/dev/null 2>&1; then
+  kubectl create secret generic garage-rpc -n atlantis \
+    --from-literal=rpc-secret="$(openssl rand -hex 32)"
+  log "Created: atlantis/garage-rpc"
+else
+  log "Exists: atlantis/garage-rpc"
+fi
 
-# server-side apply required: scaledjobs CRD exceeds the 262144-byte annotation limit for client-side apply
-step_header 8 "Installing KEDA ${KEDA_VERSION}"
-kubectl apply --server-side --force-conflicts \
-  -f "https://github.com/kedacore/keda/releases/download/v${KEDA_VERSION}/keda-${KEDA_VERSION}.yaml"
-log "Waiting for KEDA operator..."
-kubectl rollout status deployment/keda-operator -n keda --timeout=180s
+if ! kubectl get secret anubis-key -n anubis >/dev/null 2>&1; then
+  kubectl create secret generic anubis-key -n anubis \
+    --from-literal=ED25519_PRIVATE_KEY_HEX="$(openssl rand -hex 32)"
+  log "Created: anubis/anubis-key"
+else
+  log "Exists: anubis/anubis-key"
+fi
+
+for secret in gitea-runner-registration gitea-api-token; do
+  if ! kubectl get secret "${secret}" -n gitea-runners >/dev/null 2>&1; then
+    kubectl create secret generic "${secret}" -n gitea-runners \
+      --from-literal=token=placeholder-update-after-gitea-is-up
+    log "Created: gitea-runners/${secret} (placeholder)"
+  else
+    log "Exists: gitea-runners/${secret}"
+  fi
+done
+
+# ============================================================================
+# Step 6: Install Argo CD and hand over to git
+# ============================================================================
+step_header 6 "Installing Argo CD"
+apply_kustomization "${MANIFESTS_DIR}/argocd/install"
+
+log "Waiting for Argo CD to be ready..."
+kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
+kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=300s
+kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
+
+step_header 7 "Applying root app-of-apps"
+kubectl apply -f "${MANIFESTS_DIR}/argocd/root-app.yaml"
+log "Argo CD now reconciles the cluster from git (argocd/apps/)"
 
 K3S_TOKEN=$(cat /var/lib/rancher/k3s/server/node-token)
+ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "<not yet created>")
 
 log "Bootstrap complete!"
 section_header "Bootstrap Summary"
@@ -83,9 +131,15 @@ echo ""
 echo "JOIN WORKER NODES (worker1-3):"
 echo "  sudo K3S_TOKEN='${K3S_TOKEN}' VIP='${VIP}' bash scripts/03-join-worker.sh"
 echo ""
+echo "ARGO CD:"
+echo "  UI:       kubectl port-forward svc/argocd-server -n argocd 8080:443"
+echo "  Login:    admin / ${ARGOCD_PASS}"
+echo "  Watch:    kubectl get applications -n argocd -w"
+echo ""
+echo "AFTER GITEA IS UP (runtime credentials Argo CD cannot mint):"
+echo "  - Runner registration + KEDA API tokens : scripts/04-deploy-apps.sh step 9"
+echo "  - Atlantis VCS secret + Garage layout   : scripts/04-deploy-apps.sh steps 10-12"
+echo ""
 echo "Save your token:"
 echo "  NODE_TOKEN='${K3S_TOKEN}'"
-echo ""
-echo "For custom scripts:"
-echo " export K3S_TOKEN='${K3S_TOKEN}'; export VIP='${VIP}'"
 echo "================================================================================"

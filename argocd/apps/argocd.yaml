@@ -1,0 +1,35 @@
+# Argo CD manages its own installation from git after the initial
+# script-driven install. Bump the version in argocd/install/kustomization.yaml
+# and Argo CD upgrades itself on the next sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TandemIT/manifests.git
+    targetRevision: master
+    path: argocd/install
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The Application/ApplicationSet CRDs exceed the client-side apply
+      # annotation limit in some releases; server-side apply is always safe.
+      - ServerSideApply=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

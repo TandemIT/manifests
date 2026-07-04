@@ -1,0 +1,22 @@
+# Since Argo CD 1.8 the built-in health check for the Application CRD is
+# disabled. The app-of-apps pattern relies on it: sync waves on the child
+# Applications only gate on each other when the root app can tell whether a
+# child Application is Healthy. This restores the upstream-documented check.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.argoproj.io_Application: |
+    hs = {}
+    hs.status = "Progressing"
+    hs.message = ""
+    if obj.status ~= nil then
+      if obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+    end
+    return hs

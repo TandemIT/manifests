@@ -1,0 +1,33 @@
+# Atlantis + Garage S3 backend. The pods stay in
+# CreateContainerConfigError until the runtime secrets exist (atlantis-vcs,
+# garage-s3-credentials) and the Garage layout is initialized — see
+# scripts/04-deploy-apps.sh steps 10–12. Argo CD reports Progressing until
+# then; that is expected on a fresh cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: atlantis
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TandemIT/manifests.git
+    targetRevision: master
+    path: apps/atlantis
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: atlantis
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

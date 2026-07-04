@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Argo CD itself, pinned to the upstream release manifest.
+# Applied once by scripts/01-bootstrap-first-master.sh; afterwards the
+# "argocd" Application (argocd/apps/argocd.yaml) manages it from git,
+# so upgrading Argo CD is a version bump here + commit.
+namespace: argocd
+
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.4/manifests/install.yaml
+
+patches:
+  - path: argocd-cm-patch.yaml

@@ -1,0 +1,34 @@
+# Platform layer: RBAC, kured, MetalLB, KEDA, CoreDNS customization.
+# First wave — Traefik (wave 2) needs MetalLB to hand out its LoadBalancer IP,
+# and the runner ScaledObject (wave 6) needs the KEDA CRDs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TandemIT/manifests.git
+    targetRevision: master
+    path: platform
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Required: the KEDA scaledjobs CRD exceeds the 262144-byte
+      # last-applied-configuration annotation limit of client-side apply.
+      - ServerSideApply=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

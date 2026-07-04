@@ -1,0 +1,32 @@
+# Act Runner + KEDA ScaledObject. Runners stay at the placeholder secrets
+# (created by scripts/01-bootstrap-first-master.sh) until the runtime tokens
+# are minted against the live Gitea API — see scripts/04-deploy-apps.sh
+# step 9 or COMMANDS.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitea-runner
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TandemIT/manifests.git
+    targetRevision: master
+    path: apps/gitea-runner
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitea-runners
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

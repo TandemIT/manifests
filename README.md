@@ -42,7 +42,7 @@ This repository contains all Kubernetes manifests needed to deploy and operate a
 | Control-plane HA           | kube-vip (ARP)                         |
 | Automated node maintenance | kured                                  |
 
-Everything is managed through **Kustomize** with **Helm** used solely for the Gitea application chart. There is no GitOps controller (Flux/ArgoCD) — deployments are driven by idempotent shell scripts that wrap `kubectl` and `helm`.
+Everything is managed through **Kustomize** with **Helm** used solely for the Gitea application chart. Deployments are driven by **Argo CD** using the app-of-apps pattern: `scripts/01-bootstrap-first-master.sh` installs Argo CD alongside the cluster itself and applies the root Application (`argocd/root-app.yaml`); everything else — MetalLB, KEDA, Traefik, cert-manager, Gitea, runners, Atlantis — is reconciled from git via the Applications in `argocd/apps/`. The shell scripts only cover what a GitOps controller cannot do: node bootstrap, secret generation, and one-time runtime initialization (runner tokens, Garage layout).
 
 ---
 
@@ -131,19 +131,20 @@ Pod-to-pod DNS resolution for `git.open-ict.hu` is solved with **hostAliases** i
 
 ### Platform Layer
 
-Deployed during cluster bootstrap via `scripts/01-bootstrap-first-master.sh`. These components are prerequisites for everything else.
+K3s, kube-vip, and Argo CD are installed by `scripts/01-bootstrap-first-master.sh`; the rest is deployed by Argo CD (wave-1 `platform` Application syncing `platform/`).
 
 | Component | Version      | Namespace        | Purpose                                              |
 | --------- | ------------ | ---------------- | ---------------------------------------------------- |
 | K3s       | v1.32.3+k3s1 | —                | Lightweight Kubernetes distribution                  |
 | kube-vip  | v0.8.7       | `kube-system`    | Floating VIP for the Kubernetes API server           |
+| Argo CD   | v3.4.4       | `argocd`         | GitOps controller — reconciles this repo             |
 | MetalLB   | v0.14.9      | `metallb-system` | L2 load balancer for application services            |
 | kured     | v1.15.0      | `kube-system`    | Automated rolling node reboot (weekdays 02:00–05:00) |
 | KEDA      | v2.15.1      | `keda`           | Event-driven pod autoscaling                         |
 
 ### Application Layer
 
-Deployed via `scripts/04-deploy-apps.sh`. Order matters — cert-manager must be ready before Gitea, Traefik must have its LoadBalancer IP before routes are created.
+Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — cert-manager CRDs before the issuers, Traefik and MetalLB before anything that needs an IngressRoute or LoadBalancer IP, Gitea before the runners and Atlantis. `scripts/04-deploy-apps.sh` remains as the script-driven alternative and as the runtime-initialization reference (runner tokens, Garage layout).
 
 | Component      | Version | Namespace       | Purpose                                      |
 | -------------- | ------- | --------------- | -------------------------------------------- |
@@ -327,7 +328,9 @@ Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
 ### Bootstrap order
 
 ```bash
-# 1. Initialize the first control-plane node
+# 1. Initialize the first control-plane node: K3s + kube-vip + bootstrap
+#    secrets + Argo CD + root app-of-apps. From this point Argo CD deploys
+#    the entire platform and application stack from git.
 bash scripts/01-bootstrap-first-master.sh
 
 # 2. Join the remaining control-plane nodes (run on master2, master3)
@@ -336,8 +339,15 @@ bash scripts/02-join-control-plane.sh
 # 3. Join worker nodes (run on worker1–3)
 bash scripts/03-join-worker.sh
 
-# 4. Deploy the application stack (run on master1)
-bash scripts/04-deploy-apps.sh
+# 4. Once Gitea is up, mint the runtime credentials Argo CD cannot create
+#    (runner registration + KEDA tokens, Atlantis VCS secret, Garage layout):
+#    scripts/04-deploy-apps.sh steps 9–12, or follow COMMANDS.md.
+```
+
+Watch Argo CD converge:
+
+```bash
+kubectl get applications -n argocd -w
 ```
 
 Each script is idempotent. Re-running it will not duplicate resources. To tear down the application layer:
@@ -348,14 +358,24 @@ bash scripts/05-reset-apps.sh
 
 ### Secrets (never committed)
 
-The bootstrap scripts generate and store the following as Kubernetes Secrets at deploy time:
+Generated once by `scripts/01-bootstrap-first-master.sh` (Argo CD syncs manifests but cannot invent secret material):
 
-| Secret               | Namespace                | Contents                        |
-| -------------------- | ------------------------ | ------------------------------- |
-| `gitea-admin`        | `gitea`                  | Gitea admin username + password |
-| `gitea-runner-token` | `gitea-runners`          | Act Runner registration token   |
-| `keda-gitea-token`   | `keda` / `gitea-runners` | Gitea API token for KEDA        |
-| `gitea-postgresql`   | `gitea`                  | Database credentials            |
+| Secret                      | Namespace       | Contents                                        |
+| --------------------------- | --------------- | ----------------------------------------------- |
+| `gitea-admin`               | `gitea`         | Gitea admin username + password                 |
+| `garage-rpc`                | `atlantis`      | Garage cluster RPC secret                       |
+| `anubis-key`                | `anubis`        | Anubis ED25519 signing key                      |
+| `gitea-runner-registration` | `gitea-runners` | Act Runner registration token (placeholder)     |
+| `gitea-api-token`           | `gitea-runners` | Gitea API token for KEDA scaler (placeholder)   |
+
+Created after Gitea is running (`scripts/04-deploy-apps.sh` steps 9–12 replace the placeholders and add these):
+
+| Secret                  | Namespace  | Contents                                          |
+| ----------------------- | ---------- | ------------------------------------------------- |
+| `atlantis-vcs`          | `atlantis` | Gitea bot username, API token, webhook secret     |
+| `garage-s3-credentials` | `atlantis` | S3 access key for the Terraform state bucket      |
+
+PostgreSQL and Valkey credentials are managed by the Gitea Helm chart itself (static chart values; Valkey runs without a password inside the cluster, both are isolated by NetworkPolicies).
 
 ---
 
@@ -379,6 +399,14 @@ Contains all automation scripts for cluster lifecycle management:
 - **04-deploy-apps.sh**: Deploys the full application stack (Traefik, cert-manager, Gitea, etc.).
 - **05-reset-apps.sh**: Removes all application workloads from the cluster.
 - **lib-functions.sh**: Shared Bash functions used by other scripts.
+
+### argocd/
+
+The GitOps control layer — the only directory Argo CD needs to be pointed at once; everything else follows from it:
+
+- **install/**: Kustomization pinning the upstream Argo CD release manifest (plus the `argocd-cm` patch that restores the Application health check required for app-of-apps wave ordering). Applied once by `scripts/01-bootstrap-first-master.sh`; afterwards Argo CD manages its own installation from here.
+- **root-app.yaml**: The root Application (app-of-apps). Points at `argocd/apps/` — the single manifest the bootstrap script applies imperatively.
+- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `platform` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `gitea` (5, Helm chart with values from this repo) → `gitea-runner`, `atlantis` (6).
 
 ### platform/
 
