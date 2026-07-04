@@ -1,12 +1,12 @@
 #!/bin/bash
-# Zero-touch full bootstrap: Proxmox VMs (Terraform) -> K3s + platform +
-# Argo CD (Ansible driving scripts/01..03) -> GitOps takes over.
+# Zero-touch full bootstrap: Proxmox VMs (OpenTofu/Terraform) -> K3s +
+# platform + Argo CD (Ansible driving scripts/01..03) -> GitOps takes over.
 #
 # Prerequisites: terraform/terraform.tfvars filled in (see setup.sh), local
 # commits PUSHED to the manifests repo (nodes and Argo CD pull from git),
 # and the VM template with qemu-guest-agent preinstalled.
 #
-# Fully non-interactive. Re-running is safe: terraform is declarative and
+# Fully non-interactive. Re-running is safe: the infra is declarative and
 # the bootstrap scripts are idempotent.
 set -euo pipefail
 
@@ -29,6 +29,15 @@ if [ ! -f "terraform/terraform.tfvars" ]; then
     exit 1
 fi
 
+# OpenTofu preferred, Terraform as fallback; override with TF_BIN=... if both
+# are installed and you need a specific one (e.g. destroying pre-tofu state).
+TF_BIN="${TF_BIN:-$(command -v tofu || command -v terraform || true)}"
+if [ -z "${TF_BIN}" ]; then
+    echo -e "${RED}Error: neither tofu nor terraform found. Run ./setup.sh first.${NC}"
+    exit 1
+fi
+echo -e "Using IaC binary: ${GREEN}${TF_BIN}${NC}"
+
 if ! command -v ansible-playbook &> /dev/null; then
     echo -e "${YELLOW}Ansible not found. Installing...${NC}"
     sudo apt update
@@ -40,13 +49,13 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     echo -e "${YELLOW}pull from the git remote - unpushed changes will NOT be deployed.${NC}"
 fi
 
-step "Step 1: Provisioning VMs with Terraform (also generates ansible/inventory.yml)"
-terraform -chdir=terraform init -input=false
-terraform -chdir=terraform apply -input=false -auto-approve
+step "Step 1: Provisioning VMs (also generates ansible/inventory.yml)"
+"${TF_BIN}" -chdir=terraform init -input=false
+"${TF_BIN}" -chdir=terraform apply -input=false -auto-approve
 
-CONTROL_PLANE_IP=$(terraform -chdir=terraform output -json control_plane_ips | jq -r '.[0]')
-mapfile -t ALL_NODE_IPS < <(terraform -chdir=terraform output -json control_plane_ips | jq -r '.[]'; \
-                            terraform -chdir=terraform output -json worker_ips | jq -r '.[]')
+CONTROL_PLANE_IP=$("${TF_BIN}" -chdir=terraform output -json control_plane_ips | jq -r '.[0]')
+mapfile -t ALL_NODE_IPS < <("${TF_BIN}" -chdir=terraform output -json control_plane_ips | jq -r '.[]'; \
+                            "${TF_BIN}" -chdir=terraform output -json worker_ips | jq -r '.[]')
 
 step "Step 2: Waiting for SSH on all ${#ALL_NODE_IPS[@]} nodes"
 # UserKnownHostsFile=/dev/null: rebuilt VMs reuse IPs with fresh host keys.
@@ -104,7 +113,7 @@ ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
 echo -e "\n${GREEN}================================${NC}"
 echo -e "${GREEN}Deployment Complete${NC}"
 echo -e "${GREEN}================================${NC}"
-terraform -chdir=terraform output cluster_info
+"${TF_BIN}" -chdir=terraform output cluster_info
 echo ""
 echo "Cluster access:"
 echo -e "  ${YELLOW}export KUBECONFIG=$(pwd)/kubeconfig${NC}"

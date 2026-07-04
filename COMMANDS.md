@@ -40,7 +40,7 @@ MetalLB manages LoadBalancer services (L2 mode):
 
 ---
 
-## Step 0 — Zero-touch alternative (Terraform + Ansible)
+## Step 0 — Zero-touch alternative (OpenTofu/Terraform + Ansible)
 
 If the nodes are Proxmox VMs, the whole flow below (including VM creation) is
 automated:

@@ -23,13 +23,19 @@ chmod +x deploy.sh setup.sh 2>/dev/null || true
 
 echo -e "\n${GREEN}Checking prerequisites...${NC}"
 
-if command -v terraform &> /dev/null; then
-    echo -e "${GREEN}[ok] Terraform: $(terraform version | head -n1)${NC}"
+# OpenTofu preferred; an existing Terraform install works too (deploy.sh
+# auto-detects, tofu first). Installs OpenTofu if neither is present.
+if command -v tofu &> /dev/null; then
+    echo -e "${GREEN}[ok] OpenTofu: $(tofu version | head -n1)${NC}"
+elif command -v terraform &> /dev/null; then
+    echo -e "${GREEN}[ok] Terraform: $(terraform version | head -n1) (OpenTofu also works - deploy.sh prefers tofu if installed)${NC}"
 else
-    echo -e "${YELLOW}[--] Terraform not found. Installing...${NC}"
-    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-    sudo apt update && sudo apt install -y terraform
+    echo -e "${YELLOW}[--] Neither tofu nor terraform found. Installing OpenTofu...${NC}"
+    curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh
+    chmod +x /tmp/install-opentofu.sh
+    /tmp/install-opentofu.sh --install-method deb
+    rm -f /tmp/install-opentofu.sh
+    echo -e "${GREEN}[ok] OpenTofu: $(tofu version | head -n1)${NC}"
 fi
 
 if command -v ansible &> /dev/null; then

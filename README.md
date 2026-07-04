@@ -323,18 +323,18 @@ Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
 
 > Full command reference is in [COMMANDS.md](COMMANDS.md).
 
-### Option A — Zero-touch full bootstrap (Terraform + Ansible)
+### Option A — Zero-touch full bootstrap (OpenTofu/Terraform + Ansible)
 
 Provisions the VMs on Proxmox and runs the entire bootstrap end-to-end from a deploy host, with no interactive steps:
 
 ```bash
-./setup.sh     # one-time: prereq check, creates terraform/terraform.tfvars
+./setup.sh     # one-time: prereq check (installs OpenTofu if needed), creates terraform/terraform.tfvars
 # edit terraform/terraform.tfvars (Proxmox API token, template, network)
 git push       # nodes and Argo CD pull the manifests from git
-./deploy.sh    # Terraform → VMs → Ansible → scripts/01..03 → Argo CD converges
+./deploy.sh    # tofu/terraform → VMs → Ansible → scripts/01..03 → Argo CD converges
 ```
 
-`deploy.sh` is fully non-interactive and safe to re-run. Terraform also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
+`deploy.sh` is fully non-interactive and safe to re-run. It auto-detects the IaC binary (OpenTofu preferred, Terraform as fallback; override with `TF_BIN=`). The apply also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
 
 Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS record `git.open-ict.hu` → `172.16.69.60`.
 
@@ -408,15 +408,15 @@ This repository is organized to provide a clear separation between platform infr
 
 ### Root-Level Files
 
-- **setup.sh**: One-time prerequisite check for the full bootstrap (Terraform/Ansible/jq present, tfvars created from the example).
-- **deploy.sh**: Zero-touch full bootstrap — Terraform provisions the VMs, Ansible runs `scripts/01..03`, then waits for Argo CD to converge.
+- **setup.sh**: One-time prerequisite check for the full bootstrap (OpenTofu/Terraform, Ansible, jq present, tfvars created from the example).
+- **deploy.sh**: Zero-touch full bootstrap — OpenTofu/Terraform provisions the VMs, Ansible runs `scripts/01..03`, then waits for Argo CD to converge.
 - **install.sh**: Entry point script for bootstrapping the first control-plane node manually. It sources the main bootstrap script and should be run on the initial master node.
 - **COMMANDS.md**: Comprehensive command reference for all deployment and operational tasks.
 - **README.md**: This documentation file.
 
 ### terraform/
 
-Provisions the 6 VMs on Proxmox (Telmate provider, cloud-init clones of an Ubuntu template) and renders `ansible/inventory.yml` from the same variables, so addressing lives in one place (`terraform.tfvars`). State and tfvars are gitignored.
+Provisions the VMs on Proxmox (Telmate provider, cloud-init clones of an Ubuntu template) and renders `ansible/inventory.yml` from the same variables, so addressing lives in one place (`terraform.tfvars`). Plain HCL — works with both OpenTofu and Terraform. State and tfvars are gitignored.
 
 ### ansible/
 
