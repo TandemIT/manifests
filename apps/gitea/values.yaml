@@ -140,8 +140,5 @@ gitea:
     security:
       INSTALL_LOCK: "true"
 
-    picture:
-      DISABLE_GRAVATAR: "false"
-
     webhook:
       ALLOWED_HOST_LIST: "*.svc.cluster.local"

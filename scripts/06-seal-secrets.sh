@@ -11,7 +11,8 @@
 #
 # Sealed files (commit all of them):
 #   apps/gitea/sealedsecret-gitea-admin.yaml
-#   apps/gitea/sealedsecret-gitea-oidc.yaml        (optional, prompted)
+#   apps/gitea/sealedsecret-gitea-oidc-<slug>.yaml (optional, one per OIDC provider)
+#   apps/gitea/sealedsecret-gitea-ldap-<slug>.yaml (optional, one per LDAP provider)
 #   apps/anubis/sealedsecret-anubis-key.yaml
 #   apps/atlantis/garage/sealedsecret-garage-rpc.yaml
 #   apps/atlantis/sealedsecret-atlantis-vcs.yaml   (optional, prompted)
@@ -46,7 +47,7 @@ if [[ -z "${KUBECONFIG:-}" ]]; then
   fi
 fi
 
-require_binary kubectl kubeseal openssl
+require_binary kubectl kubeseal openssl python3
 require_cluster
 
 # Read a key from a live in-cluster secret; empty output when absent.
@@ -157,39 +158,168 @@ else
   add_resource "${MANIFESTS_DIR}/apps/anubis/kustomization.yaml" sealedsecret-anubis-key.yaml
 fi
 
-# Optional — needs an Authentik OAuth2 provider.
-step_header 5 "Sealing gitea/gitea-oidc"
-OUT="${MANIFESTS_DIR}/apps/gitea/sealedsecret-gitea-oidc.yaml"
-OIDC_SEALED=false
-if [[ -f "${OUT}" ]]; then
-  log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
-  OIDC_SEALED=true
-else
-  OIDC_KEY="$(live_value gitea-oidc gitea key)"
-  OIDC_SECRET="$(live_value gitea-oidc gitea secret)"
-  if [[ -n "${OIDC_KEY}" && -n "${OIDC_SECRET}" ]]; then
-    log "Reusing live OIDC client credentials"
-  else
+# Optional — needs an OAuth2 provider/application per entry, created by you.
+# Supports any number of providers: terraform.tfvars' gitea_oidc_providers is
+# a map, keyed by slug. Falls back to a single interactive provider when
+# terraform.tfvars has none configured.
+step_header 5 "Sealing gitea OIDC providers"
+
+PROVIDERS_JSON="{}"
+if command -v terraform >/dev/null 2>&1 && [[ -f "${MANIFESTS_DIR}/terraform/terraform.tfvars" ]]; then
+  PROVIDERS_JSON="$(terraform -chdir="${MANIFESTS_DIR}/terraform" output -json gitea_oidc_providers 2>/dev/null || echo "{}")"
+fi
+
+if [[ "${PROVIDERS_JSON}" == "{}" ]]; then
+  echo ""
+  read -rp "  Configure Gitea OIDC login (no providers found in terraform.tfvars)? [y/N]: " OIDC_ANSWER
+  if [[ "${OIDC_ANSWER,,}" == "y" ]]; then
+    read -rp "  Display name (e.g. Authentik): " OIDC_NAME
+    read -rp "  OIDC Client ID:     " OIDC_KEY
+    read -rsp "  OIDC Client Secret: " OIDC_SECRET
     echo ""
-    read -rp "  Configure Gitea OIDC login (Authentik)? [y/N]: " OIDC_ANSWER
-    if [[ "${OIDC_ANSWER,,}" == "y" ]]; then
-      read -rp "  OIDC Client ID:     " OIDC_KEY
-      read -rsp "  OIDC Client Secret: " OIDC_SECRET
-      echo ""
-    else
-      OIDC_KEY=""
-      log "Skipping OIDC — re-run this script once the Authentik provider exists"
-    fi
-  fi
-  if [[ -n "${OIDC_KEY}" ]]; then
-    seal_secret gitea-oidc gitea "${OUT}" "key=${OIDC_KEY}" "secret=${OIDC_SECRET}"
-    add_resource "${MANIFESTS_DIR}/apps/gitea/kustomization.yaml" sealedsecret-gitea-oidc.yaml
-    OIDC_SEALED=true
+    read -rp "  Discovery URL:      " OIDC_DISCOVERY
+    read -rp "  Icon URL (optional): " OIDC_ICON
+    SLUG="$(echo "${OIDC_NAME}" | tr '[:upper:] ' '[:lower:]-')"
+    PROVIDERS_JSON="$(SLUG="${SLUG}" OIDC_NAME="${OIDC_NAME}" OIDC_KEY="${OIDC_KEY}" \
+      OIDC_SECRET="${OIDC_SECRET}" OIDC_DISCOVERY="${OIDC_DISCOVERY}" OIDC_ICON="${OIDC_ICON}" \
+      python3 -c "
+import os, json
+print(json.dumps({os.environ['SLUG']: {
+    'display_name': os.environ['OIDC_NAME'],
+    'client_id': os.environ['OIDC_KEY'],
+    'client_secret': os.environ['OIDC_SECRET'],
+    'discovery_url': os.environ['OIDC_DISCOVERY'],
+    'icon_url': os.environ.get('OIDC_ICON', ''),
+}}))
+")"
+  else
+    log "Skipping OIDC — add entries to gitea_oidc_providers in terraform.tfvars, or answer y next run"
   fi
 fi
 
+while IFS=$'\t' read -r SLUG CID CSECRET; do
+  [[ -n "${SLUG}" ]] || continue
+  OUT="${MANIFESTS_DIR}/apps/gitea/sealedsecret-gitea-oidc-${SLUG}.yaml"
+  SECRET_NAME="gitea-oidc-${SLUG}"
+  if [[ -f "${OUT}" ]]; then
+    log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
+    continue
+  fi
+  LIVE_KEY="$(live_value "${SECRET_NAME}" gitea key)"
+  LIVE_SECRET="$(live_value "${SECRET_NAME}" gitea secret)"
+  if [[ -n "${LIVE_KEY}" && -n "${LIVE_SECRET}" ]]; then
+    log "Reusing live OIDC client credentials for ${SLUG}"
+    CID="${LIVE_KEY}"
+    CSECRET="${LIVE_SECRET}"
+  fi
+  seal_secret "${SECRET_NAME}" gitea "${OUT}" "key=${CID}" "secret=${CSECRET}"
+  add_resource "${MANIFESTS_DIR}/apps/gitea/kustomization.yaml" "sealedsecret-gitea-oidc-${SLUG}.yaml"
+done < <(PROVIDERS_JSON="${PROVIDERS_JSON}" python3 -c "
+import json, os
+d = json.loads(os.environ['PROVIDERS_JSON'])
+for slug, p in d.items():
+    print('\t'.join([slug, p.get('client_id', ''), p.get('client_secret', '')]))
+")
+
+# Regenerate the Gitea Helm values for OIDC from scratch every run, so
+# removing a provider from terraform.tfvars also removes its login button
+# (the sealed secret file itself is left in place — delete it by hand to
+# fully rotate/remove a provider).
+PROVIDERS_JSON="${PROVIDERS_JSON}" python3 -c "
+import json, os
+d = json.loads(os.environ['PROVIDERS_JSON'])
+lines = ['gitea:']
+if not d:
+    lines.append('  oauth: []')
+else:
+    lines.append('  oauth:')
+    for slug, p in d.items():
+        lines.append(f'    - name: {json.dumps(p.get(\"display_name\", slug))}')
+        lines.append('      provider: openidConnect')
+        lines.append(f'      existingSecret: {json.dumps(f\"gitea-oidc-{slug}\")}')
+        lines.append(f'      autoDiscoverUrl: {json.dumps(p.get(\"discovery_url\", \"\"))}')
+        icon = p.get('icon_url', '')
+        if icon:
+            lines.append(f'      iconUrl: {json.dumps(icon)}')
+        lines.append('      scopes: \"email profile gitea\"')
+        lines.append('      groupClaimName: gitea')
+        lines.append('      adminGroup: admin')
+        lines.append('      restrictedGroup: restricted')
+print('\n'.join(lines))
+" > "${MANIFESTS_DIR}/apps/gitea/values-oidc.yaml"
+PROVIDER_COUNT="$(PROVIDERS_JSON="${PROVIDERS_JSON}" python3 -c "import json,os; print(len(json.loads(os.environ['PROVIDERS_JSON'])))")"
+log "Generated: apps/gitea/values-oidc.yaml (${PROVIDER_COUNT} provider(s))"
+
+# Optional — needs an LDAP/AD server (or an Authentik LDAP outpost) per
+# entry. Same shape as the OIDC block above: terraform.tfvars'
+# gitea_ldap_providers is a map keyed by slug, sealed into one secret per
+# provider (bindDn/bindPassword — the key names the Gitea chart expects),
+# then apps/gitea/values-ldap.yaml is regenerated from scratch every run.
+step_header 6 "Sealing gitea LDAP providers"
+
+LDAP_JSON="{}"
+if command -v terraform >/dev/null 2>&1 && [[ -f "${MANIFESTS_DIR}/terraform/terraform.tfvars" ]]; then
+  LDAP_JSON="$(terraform -chdir="${MANIFESTS_DIR}/terraform" output -json gitea_ldap_providers 2>/dev/null || echo "{}")"
+fi
+if [[ "${LDAP_JSON}" == "{}" ]]; then
+  log "No LDAP providers in terraform.tfvars — skipping (gitea_ldap_providers)"
+fi
+
+while IFS=$'\t' read -r SLUG BIND_DN BIND_PASSWORD; do
+  [[ -n "${SLUG}" ]] || continue
+  OUT="${MANIFESTS_DIR}/apps/gitea/sealedsecret-gitea-ldap-${SLUG}.yaml"
+  SECRET_NAME="gitea-ldap-${SLUG}"
+  if [[ -f "${OUT}" ]]; then
+    log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
+    continue
+  fi
+  LIVE_DN="$(live_value "${SECRET_NAME}" gitea bindDn)"
+  LIVE_PASSWORD="$(live_value "${SECRET_NAME}" gitea bindPassword)"
+  if [[ -n "${LIVE_DN}" && -n "${LIVE_PASSWORD}" ]]; then
+    log "Reusing live LDAP bind credentials for ${SLUG}"
+    BIND_DN="${LIVE_DN}"
+    BIND_PASSWORD="${LIVE_PASSWORD}"
+  fi
+  seal_secret "${SECRET_NAME}" gitea "${OUT}" "bindDn=${BIND_DN}" "bindPassword=${BIND_PASSWORD}"
+  add_resource "${MANIFESTS_DIR}/apps/gitea/kustomization.yaml" "sealedsecret-gitea-ldap-${SLUG}.yaml"
+done < <(LDAP_JSON="${LDAP_JSON}" python3 -c "
+import json, os
+d = json.loads(os.environ['LDAP_JSON'])
+for slug, p in d.items():
+    print('\t'.join([slug, p.get('bind_dn', ''), p.get('bind_password', '')]))
+")
+
+LDAP_JSON="${LDAP_JSON}" python3 -c "
+import json, os
+d = json.loads(os.environ['LDAP_JSON'])
+lines = ['gitea:']
+if not d:
+    lines.append('  ldap: []')
+else:
+    lines.append('  ldap:')
+    for slug, p in d.items():
+        lines.append(f'    - name: {json.dumps(p.get(\"display_name\", slug))}')
+        lines.append(f'      existingSecret: {json.dumps(f\"gitea-ldap-{slug}\")}')
+        lines.append(f'      securityProtocol: {json.dumps(p.get(\"security_protocol\", \"LDAPS\"))}')
+        lines.append(f'      host: {json.dumps(p.get(\"host\", \"\"))}')
+        lines.append(f'      port: {json.dumps(str(p.get(\"port\", \"\")))}')
+        lines.append(f'      userSearchBase: {json.dumps(p.get(\"user_search_base\", \"\"))}')
+        lines.append(f'      userFilter: {json.dumps(p.get(\"user_filter\", \"\"))}')
+        admin_filter = p.get('admin_filter', '')
+        if admin_filter:
+            lines.append(f'      adminFilter: {json.dumps(admin_filter)}')
+        lines.append(f'      emailAttribute: {json.dumps(p.get(\"email_attribute\", \"mail\"))}')
+        lines.append(f'      usernameAttribute: {json.dumps(p.get(\"username_attribute\", \"uid\"))}')
+        ssh_attr = p.get('public_ssh_key_attribute', '')
+        if ssh_attr:
+            lines.append(f'      publicSSHKeyAttribute: {json.dumps(ssh_attr)}')
+print('\n'.join(lines))
+" > "${MANIFESTS_DIR}/apps/gitea/values-ldap.yaml"
+LDAP_COUNT="$(LDAP_JSON="${LDAP_JSON}" python3 -c "import json,os; print(len(json.loads(os.environ['LDAP_JSON'])))")"
+log "Generated: apps/gitea/values-ldap.yaml (${LDAP_COUNT} provider(s))"
+
 # Optional — needs a Gitea bot account + API token.
-step_header 6 "Sealing atlantis/atlantis-vcs"
+step_header 7 "Sealing atlantis/atlantis-vcs"
 OUT="${MANIFESTS_DIR}/apps/atlantis/sealedsecret-atlantis-vcs.yaml"
 if [[ -f "${OUT}" ]]; then
   log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
@@ -227,10 +357,6 @@ section_header "Sealing complete"
 echo ""
 echo "Next steps:"
 echo "  1. git add -A && git commit && git push — Argo CD takes ownership on sync."
-if [[ "${OIDC_SEALED}" == "true" ]]; then
-  echo "  2. Enable OIDC: uncomment the values-oidc.yaml line in argocd/apps/gitea.yaml"
-  echo "     and commit."
-fi
 echo ""
 echo "IMPORTANT — back up the sealing keypair off-cluster (without it, a cluster"
 echo "rebuild makes every SealedSecret in git undecryptable):"

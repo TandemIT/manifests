@@ -28,6 +28,18 @@ output "kubeconfig_command" {
   value       = "ssh ubuntu@${cidrhost(local.control_plane_network, local.control_plane_start_host)} 'sudo cat /etc/rancher/k3s/k3s.yaml'"
 }
 
+output "gitea_oidc_providers" {
+  description = "Passthrough of var.gitea_oidc_providers for scripts/06-seal-secrets.sh"
+  value       = var.gitea_oidc_providers
+  sensitive   = true
+}
+
+output "gitea_ldap_providers" {
+  description = "Passthrough of var.gitea_ldap_providers for scripts/06-seal-secrets.sh"
+  value       = var.gitea_ldap_providers
+  sensitive   = true
+}
+
 output "cluster_info" {
   description = "K3s cluster information"
   value = {

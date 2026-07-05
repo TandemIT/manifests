@@ -153,3 +153,47 @@ variable "manifests_revision" {
   type        = string
   default     = "master"
 }
+
+# Passthrough only - not used by any resource here. Lets scripts/06-seal-secrets.sh
+# read a local, gitignored input (this file) instead of prompting
+# interactively, and supports any number of providers. Create the OAuth2
+# provider/application for each one yourself (e.g. in Authentik, Keycloak,
+# ...) and add an entry here, keyed by a short slug used in the secret name
+# and Gitea's callback URL (/user/oauth2/<slug>/callback). Leave empty ({})
+# to skip OIDC.
+variable "gitea_oidc_providers" {
+  description = "Gitea OIDC login providers, keyed by slug"
+  type = map(object({
+    display_name  = string
+    client_id     = string
+    client_secret = string
+    discovery_url = string
+    icon_url      = optional(string, "")
+  }))
+  default   = {}
+  sensitive = true
+}
+
+# Same passthrough pattern as gitea_oidc_providers, for Gitea's other
+# built-in auth source type. Point this at an existing LDAP/AD server, or an
+# Authentik LDAP outpost if you set one up - this repo does not create or
+# manage either. Leave empty ({}) to skip LDAP.
+variable "gitea_ldap_providers" {
+  description = "Gitea LDAP login providers, keyed by slug"
+  type = map(object({
+    display_name             = string
+    host                      = string
+    port                      = number
+    security_protocol         = optional(string, "LDAPS") # unencrypted | StartTLS | LDAPS
+    bind_dn                   = string
+    bind_password             = string
+    user_search_base          = string
+    user_filter               = string
+    admin_filter              = optional(string, "")
+    email_attribute           = optional(string, "mail")
+    username_attribute        = optional(string, "uid")
+    public_ssh_key_attribute  = optional(string, "")
+  }))
+  default   = {}
+  sensitive = true
+}

@@ -44,3 +44,41 @@ vip = "172.16.69.50"
 # pushed here before deploying.
 manifests_repo     = "https://github.com/TandemIT/manifests.git"
 manifests_revision = "master"
+
+# Gitea OIDC login providers (optional, any number). Create the OAuth2
+# provider/application for each in your identity provider (e.g. Authentik)
+# yourself, then add an entry below, keyed by a short slug - this repo does
+# not create or manage identity-provider resources. Leave empty ({}) to
+# skip OIDC (scripts/06-seal-secrets.sh will prompt interactively instead).
+gitea_oidc_providers = {
+  # authentik = {
+  #   display_name  = "Authentik"
+  #   client_id     = "YOUR_CLIENT_ID"
+  #   client_secret = "YOUR_CLIENT_SECRET"
+  #   discovery_url = "https://auth.open-ict.hu/application/o/gitea/.well-known/openid-configuration"
+  #   icon_url      = "https://auth.open-ict.hu/static/dist/assets/icons/icon.png"
+  # }
+  # keycloak = {
+  #   display_name  = "Keycloak"
+  #   client_id     = "YOUR_CLIENT_ID"
+  #   client_secret = "YOUR_CLIENT_SECRET"
+  #   discovery_url = "https://keycloak.example.com/realms/main/.well-known/openid-configuration"
+  # }
+}
+
+# Gitea LDAP login providers (optional, any number) - same idea as OIDC
+# above. Point at an existing LDAP/AD server, or an Authentik LDAP outpost
+# if you set one up; this repo does not create or manage either.
+gitea_ldap_providers = {
+  # authentik = {
+  #   display_name     = "Authentik LDAP"
+  #   host             = "ldap.open-ict.hu"
+  #   port             = 636
+  #   security_protocol = "LDAPS"
+  #   bind_dn          = "cn=gitea,ou=service-accounts,dc=open-ict,dc=hu"
+  #   bind_password    = "YOUR_BIND_PASSWORD"
+  #   user_search_base = "ou=users,dc=open-ict,dc=hu"
+  #   user_filter      = "(&(objectClass=user)(memberOf=cn=gitea-users,ou=groups,dc=open-ict,dc=hu)(uid=%s))"
+  #   admin_filter     = "(memberOf=cn=gitea-admins,ou=groups,dc=open-ict,dc=hu)"
+  # }
+}
