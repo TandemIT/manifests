@@ -11,7 +11,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   # KEDA ScaledObject manages replica count; this value is overwritten at runtime.
-  replicas: 1
+  replicas: 5
   selector:
     matchLabels:
       app: gitea-runner
