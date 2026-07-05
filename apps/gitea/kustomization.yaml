@@ -4,6 +4,7 @@ kind: Kustomization
 # Infrastructure owned by kustomize (routes, middleware, NetworkPolicies).
 # The Gitea workload itself is the Helm chart in argocd/apps/gitea.yaml.
 resources:
+  - sealedsecret-gitea-oidc-authentik.yaml
   - namespace.yaml
   - rbac-runner-bootstrap.yaml
   - middleware.yaml

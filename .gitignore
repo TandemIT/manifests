@@ -24,6 +24,7 @@ docs/pve-info-checklist.md
 
 # SSH keys
 *.pem
+!sealed-secrets-cert.pem # public key, safe to commit - see scripts/06-seal-secrets.sh
 *.key
 id_rsa*
 id_ed25519*
