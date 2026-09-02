@@ -24,8 +24,7 @@ spec:
     - type: github-runner
       metadata:
         githubApiURL: https://git.open-ict.hu/api/v1
-        runnerScope: org
-        owner: CI
+        runnerScope: global
         labels: ubuntu-latest,ubuntu-24.04,ubuntu-22.04
         noDefaultLabels: "true"
       authenticationRef:

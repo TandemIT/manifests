@@ -68,14 +68,9 @@ spec:
                   # Drop a stale token of the same name so re-mints don't 409.
                   curl -sf -X DELETE -u "${ADMIN_USER}:${ADMIN_PASS}" \
                     "${GITEA}/api/v1/users/${ADMIN_USER}/tokens/keda-scaler" || true
-                  # The KEDA github-runner scaler (runnerScope: org) lists the
-                  # org's repos via /orgs/{owner}/repos then reads each repo's
-                  # Actions runs, so the token needs read:organization AND
-                  # read:repository. read:admin does NOT imply read:organization
-                  # in Gitea, which is why the org-scoped scaler 403'd.
                   token=$(curl -sf -X POST -u "${ADMIN_USER}:${ADMIN_PASS}" \
                     -H 'Content-Type: application/json' \
-                    -d '{"name":"keda-scaler","scopes":["read:organization","read:repository"]}' \
+                    -d '{"name":"keda-scaler","scopes":["read:admin"]}' \
                     "${GITEA}/api/v1/users/${ADMIN_USER}/tokens" | jq -r .sha1)
                   [ -n "${token}" ] && [ "${token}" != "null" ]
                   kubectl create secret generic gitea-api-token \
