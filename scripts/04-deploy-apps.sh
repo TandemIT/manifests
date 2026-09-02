@@ -177,7 +177,7 @@ if [[ "${OIDC_ENABLED}" == "true" ]]; then
   GITEA_OIDC_VALUES=(--values "${MANIFESTS_DIR}/apps/gitea/values-oidc.yaml")
 fi
 helm_upgrade_install gitea gitea/gitea gitea \
-  --version "12.6.0" \
+  --version "12.7.0" \
   --values "${MANIFESTS_DIR}/apps/gitea/values.yaml" \
   "${GITEA_OIDC_VALUES[@]}" \
   --timeout 15m \
