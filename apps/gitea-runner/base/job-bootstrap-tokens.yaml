@@ -15,8 +15,14 @@ metadata:
   labels:
     app.kubernetes.io/name: runner-token-bootstrap
   annotations:
-    # Jobs are immutable — replace instead of patch when this manifest changes.
-    argocd.argoproj.io/sync-options: Replace=true
+    # Jobs are immutable: once created, the API server injects an auto-generated
+    # spec.selector and batch.kubernetes.io/{controller-uid,job-name} pod labels.
+    # A plain `kubectl replace` (Replace=true) sends the bare manifest without
+    # them and is rejected ("spec.selector: Required value") on every sync after
+    # the first, wedging the Application. Force=true makes Argo CD delete and
+    # recreate instead; the idempotency guard in the script below keeps re-runs
+    # safe (they no-op once both secrets hold non-placeholder values).
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 20
   # Generous ceiling: on a fresh cluster this Job waits for Gitea to come up.
