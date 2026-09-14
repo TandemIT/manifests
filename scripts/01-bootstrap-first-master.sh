@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib-functions.sh
 source "${SCRIPT_DIR}/lib-functions.sh"
 
-VIP="${VIP:-172.16.69.50}"
+VIP="${VIP:-172.16.10.50}"
 K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
 
 MANIFESTS_DIR="${SCRIPT_DIR}/.."
@@ -34,13 +34,13 @@ step_header 1 "Installing node prerequisites"
 install_node_prerequisites
 
 step_header 2 "Placing kube-vip static pod"
-# The template pins eth0/172.16.69.50; rewrite for this node's actual uplink
+# The template pins eth0/172.16.10.50; rewrite for this node's actual uplink
 # (cloud images name it ens18/enp*) and the configured VIP.
 DEFAULT_IFACE="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
 VIP_INTERFACE="${VIP_INTERFACE:-${DEFAULT_IFACE:-eth0}}"
 mkdir -p "${STATIC_POD_DIR}"
 sed -e "s|value: eth0|value: ${VIP_INTERFACE}|" \
-    -e "s|value: \"172.16.69.50\"|value: \"${VIP}\"|" \
+    -e "s|value: \"172.16.10.50\"|value: \"${VIP}\"|" \
   "${MANIFESTS_DIR}/platform/system/kube-vip.yaml" > "${STATIC_POD_DIR}/kube-vip.yaml"
 log "kube-vip static pod placed (interface ${VIP_INTERFACE}, VIP ${VIP})"
 

@@ -7,7 +7,7 @@ data:
   open-ict.hu.server: |
     git.open-ict.hu:53 {
         template IN A {
-          answer "{{ .Name }} 60 IN A 172.16.69.60"
+          answer "{{ .Name }} 60 IN A 145.89.192.138"
         }
         forward . /etc/resolv.conf
     }

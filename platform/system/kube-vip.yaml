@@ -42,7 +42,7 @@ spec:
         - name: vip_retryperiod
           value: "2"
         - name: address
-          value: "172.16.69.50"
+          value: "172.16.10.50"
         - name: prometheus_server
           value: ":2112"
       resources:

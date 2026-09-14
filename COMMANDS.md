@@ -4,7 +4,7 @@
 
 | Role          | Count | Notes                                       |
 | ------------- | ----- | ------------------------------------------- |
-| Control plane | 3     | kube-vip CP VIP: `172.16.69.50` (port 6443) |
+| Control plane | 3     | kube-vip CP VIP: `172.16.10.50` (port 6443) |
 | Worker        | 3     |                                             |
 
 MetalLB manages LoadBalancer services (L2 mode):
@@ -88,7 +88,7 @@ sudo K3S_TOKEN='<token-from-step-1>' bash scripts/02-join-control-plane.sh
 Run this on each additional control plane node. Each will:
 
 1. Copy the kube-vip static pod (control-plane HA only)
-2. Join via the VIP `https://172.16.69.50:6443`
+2. Join via the VIP `https://172.16.10.50:6443`
 
 ---
 
@@ -153,7 +153,7 @@ Responsibilities are split between two components:
 
 | Component | Role                                             |
 | --------- | ------------------------------------------------ |
-| kube-vip  | Control-plane HA only (VIP 172.16.69.50:6443)    |
+| kube-vip  | Control-plane HA only (VIP 172.16.10.50:6443)    |
 | MetalLB   | Service load balancing, assigns LoadBalancer IPs |
 
 kube-vip is **not** involved in application traffic routing. MetalLB operates in L2 mode using ARP, which is compatible with Proxmox LAN environments.
@@ -300,7 +300,7 @@ it reconciles automatically.
 scp root@<MASTER_IP>:/etc/rancher/k3s/k3s.yaml ~/.kube/oict-config
 
 # Update the server address to the VIP
-sed -i 's|https://127.0.0.1:6443|https://172.16.69.50:6443|' ~/.kube/oict-config
+sed -i 's|https://127.0.0.1:6443|https://172.16.10.50:6443|' ~/.kube/oict-config
 
 export KUBECONFIG=~/.kube/oict-config
 kubectl get nodes

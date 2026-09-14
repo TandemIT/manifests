@@ -14,8 +14,8 @@ template_id  = "ubuntu-24.04-cloud-tpl"
 vm_id_start  = 200
 storage      = "local-zfs"
 bridge       = "vmbr0"
-gateway      = "172.16.69.1"
-nameserver   = "172.16.69.1"
+gateway      = "172.16.10.1"
+nameserver   = "172.16.10.1"
 searchdomain = "local"
 
 # Control Plane Configuration (3 nodes for etcd quorum + kube-vip HA)
@@ -23,22 +23,23 @@ control_plane_count     = 3
 control_plane_cpu       = 2
 control_plane_memory    = 4096
 control_plane_disk_size = "15G"
-control_plane_ip_start  = "172.16.69.100"
+control_plane_ip_start  = "172.16.10.100"
 
 # Worker Configuration
 worker_count     = 3
 worker_cpu       = 1
 worker_memory    = 2048
 worker_disk_size = "10G"
-worker_ip_start  = "172.16.69.150"
+worker_ip_start  = "172.16.10.150"
 
 # K3s Configuration
 # The manifests in this repo are pinned/tested against v1.32.3+k3s1.
 k3s_version = "v1.32.3+k3s1"
 
-# Control-plane VIP (kube-vip). Keep outside the node ranges and the
-# MetalLB pool (platform/metallb/ipaddresspool.yaml, default .60).
-vip = "172.16.69.50"
+# Control-plane VIP (kube-vip). Keep outside the node ranges. The MetalLB
+# pool (platform/metallb/ipaddresspool.yaml) is a separate, external public
+# address, not part of this LAN range.
+vip = "172.16.10.50"
 
 # Where the nodes + Argo CD pull the manifests from. Local commits must be
 # pushed here before deploying.

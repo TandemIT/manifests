@@ -12,8 +12,22 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # Trusted automation sources (off-cluster runners, internal tooling) skip
+    # Anubis entirely and hit Gitea directly. Keep in sync with the http
+    # route below.
+    - kind: Rule
+      match: Host(`git.open-ict.hu`) && ClientIP(`145.89.192.0/24`, `172.16.0.0/12`)
+      priority: 100
+      services:
+        - name: gitea-http
+          namespace: gitea
+          port: 3000
     - kind: Rule
       match: Host(`git.open-ict.hu`)
+      priority: 1
+      middlewares:
+        - name: gitea-rate-limit
+          namespace: gitea
       services:
         - name: anubis
           port: 8080
@@ -34,8 +48,17 @@ spec:
   entryPoints:
     - web
   routes:
+    # Same bypass as the websecure route above; keep the CIDR list in sync.
+    - kind: Rule
+      match: Host(`git.open-ict.hu`) && ClientIP(`145.89.192.0/24`, `172.16.0.0/12`)
+      priority: 100
+      services:
+        - name: gitea-http
+          namespace: gitea
+          port: 3000
     - kind: Rule
       match: Host(`git.open-ict.hu`)
+      priority: 1
       middlewares:
         - name: https-redirect
       services:

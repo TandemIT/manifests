@@ -7,6 +7,6 @@ spec:
   template:
     spec:
       hostAliases:
-        - ip: 172.16.69.60
+        - ip: 145.89.192.138
           hostnames:
             - git.open-ict.hu

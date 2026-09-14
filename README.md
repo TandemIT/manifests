@@ -59,8 +59,8 @@ The shell scripts only cover what a GitOps controller cannot do: node bootstrap,
                         └───────────────────────┬─────────────────────────┘
                                                  │
                               ┌──────────────────▼──────────────────┐
-                              │    MetalLB VIP  172.16.69.60        │
-                              │    (L2/ARP — announced on LAN)      │
+                              │    MetalLB VIP  145.89.192.138      │
+                              │    (L2/ARP — external public IP)    │
                               └──────────────────┬──────────────────┘
                                                  │
                               ┌──────────────────▼──────────────────┐
@@ -88,7 +88,7 @@ The shell scripts only cover what a GitOps controller cannot do: node bootstrap,
   ┌──────────────────────────────────────────────────────────────────────┐
   │  Control Plane HA                                                    │
   │                                                                      │
-  │  kube-vip VIP  172.16.69.50:6443  (ARP)                             │
+  │  kube-vip VIP  172.16.10.50:6443  (ARP)                             │
   │  ┌──────────┐  ┌──────────┐  ┌──────────┐                          │
   │  │ master1  │  │ master2  │  │ master3  │                           │
   │  └──────────┘  └──────────┘  └──────────┘                          │
@@ -109,8 +109,8 @@ The shell scripts only cover what a GitOps controller cannot do: node bootstrap,
 | Node      | Role          | Description                                                  |
 | --------- | ------------- | ------------------------------------------------------------ |
 | `master1` | Control Plane | Cluster init node, bootstraps kube-vip + platform components |
-| `master2` | Control Plane | Joins via VIP `172.16.69.50:6443`                            |
-| `master3` | Control Plane | Joins via VIP `172.16.69.50:6443`                            |
+| `master2` | Control Plane | Joins via VIP `172.16.10.50:6443`                            |
+| `master3` | Control Plane | Joins via VIP `172.16.10.50:6443`                            |
 | `worker1` | Worker        | Runs application workloads                                   |
 | `worker2` | Worker        | Runs application workloads                                   |
 | `worker3` | Worker        | Runs application workloads                                   |
@@ -123,10 +123,10 @@ The three control-plane nodes provide **etcd quorum** — the cluster tolerates 
 
 | Address        | Role                         | Component |
 | -------------- | ---------------------------- | --------- |
-| `172.16.69.50` | Control-plane VIP            | kube-vip  |
-| `172.16.69.60` | Application LoadBalancer VIP | MetalLB   |
+| `172.16.10.50`   | Control-plane VIP            | kube-vip  |
+| `145.89.192.138` | Application LoadBalancer VIP | MetalLB   |
 
-Both VIPs are announced via **ARP** (Layer 2), which works well on a flat LAN (e.g. Proxmox virtual network). Upstream routing is not required.
+The control-plane VIP is announced via **ARP** (Layer 2) on the internal LAN (e.g. Proxmox virtual network); upstream routing is not required for `kubectl` access. The MetalLB VIP is a public IP bound directly to the node uplink, also announced via L2/ARP, so it is externally reachable without a separate NAT or port-forward hop.
 
 Pod-to-pod DNS resolution for `git.open-ict.hu` is solved with **hostAliases** injected directly into cert-manager and KEDA operator pods, pointing the hostname at the MetalLB VIP. This avoids a dependency on split-horizon DNS while keeping the Let's Encrypt HTTP-01 challenge and the KEDA runner-queue API working from inside the cluster.
 
@@ -170,7 +170,7 @@ K3s ships with its own `ServiceLB` (formerly Klipper), which satisfies `LoadBala
 
 **MetalLB in L2 mode solves this cleanly:**
 
-- A single virtual IP (`172.16.69.60`) is announced via ARP.
+- A single virtual IP (`145.89.192.138`) is announced via ARP.
 - The speaker pod that wins leader election holds the VIP; if that node goes down, a new speaker takes over and announces the VIP within seconds.
 - Traefik's `LoadBalancer` service always resolves to one predictable IP, which is what DNS records and Let's Encrypt HTTP-01 challenges depend on.
 
@@ -180,7 +180,7 @@ K3s is launched with `--disable=servicelb` to remove the conflict.
 
 ### kube-vip for Control-Plane HA
 
-kube-vip runs as a **static pod** on each control-plane node (placed directly into `/etc/kubernetes/manifests/` before K3s starts). It uses ARP-based leader election to float the VIP `172.16.69.50` across whichever control-plane node is currently healthy.
+kube-vip runs as a **static pod** on each control-plane node (placed directly into `/etc/kubernetes/manifests/` before K3s starts). It uses ARP-based leader election to float the VIP `172.16.10.50` across whichever control-plane node is currently healthy.
 
 This is kept completely separate from MetalLB by design:
 
@@ -336,15 +336,16 @@ git push       # nodes and Argo CD pull the manifests from git
 
 `deploy.sh` is fully non-interactive and safe to re-run. It auto-detects the IaC binary (OpenTofu preferred, Terraform as fallback; override with `TF_BIN=`). The apply also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
 
-Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS record `git.open-ict.hu` → `172.16.69.60`.
+Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS record `git.open-ict.hu` → `145.89.192.138`.
 
 ### Option B — Manual bootstrap (per-node scripts)
 
 #### Prerequisites
 
 - 6 Linux nodes reachable over SSH
-- IP range `172.16.69.50–172.16.69.60` available on the LAN
-- DNS record: `git.open-ict.hu` → `172.16.69.60`
+- IP range `172.16.10.50–172.16.10.100` available on the LAN (control-plane VIP + node addresses)
+- MetalLB pool address `145.89.192.138` routable to the node uplink (external public IP)
+- DNS record: `git.open-ict.hu` → `145.89.192.138`
 - Internet access for pulling images and Let's Encrypt challenges
 
 #### Bootstrap order

@@ -55,13 +55,13 @@ variable "bridge" {
 variable "gateway" {
   description = "Network gateway"
   type        = string
-  default     = "172.16.69.1"
+  default     = "172.16.10.1"
 }
 
 variable "nameserver" {
   description = "DNS nameserver"
   type        = string
-  default     = "172.16.69.1"
+  default     = "172.16.10.1"
 }
 
 variable "searchdomain" {
@@ -97,7 +97,7 @@ variable "control_plane_disk_size" {
 variable "control_plane_ip_start" {
   description = "Starting IP for control plane nodes"
   type        = string
-  default     = "172.16.69.100"
+  default     = "172.16.10.100"
 }
 
 variable "worker_count" {
@@ -127,7 +127,7 @@ variable "worker_disk_size" {
 variable "worker_ip_start" {
   description = "Starting IP for worker nodes"
   type        = string
-  default     = "172.16.69.150"
+  default     = "172.16.10.150"
 }
 
 variable "k3s_version" {
@@ -139,7 +139,7 @@ variable "k3s_version" {
 variable "vip" {
   description = "Control-plane VIP announced by kube-vip (must be outside the node IP ranges and the MetalLB pool)"
   type        = string
-  default     = "172.16.69.50"
+  default     = "172.16.10.50"
 }
 
 variable "manifests_repo" {
