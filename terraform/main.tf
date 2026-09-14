@@ -69,8 +69,11 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   scsihw   = "virtio-scsi-pci"
   bootdisk = "virtio0"
 
-  onboot  = true
-  startup = "order=1"
+  start_at_node_boot = true
+
+  startup_shutdown {
+    order = 1
+  }
 
   efidisk {
     storage = var.storage
@@ -147,8 +150,11 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   scsihw   = "virtio-scsi-pci"
   bootdisk = "virtio0"
 
-  onboot  = true
-  startup = "order=2"
+  start_at_node_boot = true
+
+  startup_shutdown {
+    order = 2
+  }
 
   efidisk {
     storage = var.storage
