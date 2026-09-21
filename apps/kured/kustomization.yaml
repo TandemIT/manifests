@@ -1,7 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# kured - automatic node reboot manager (weekdays 02:00-05:00)
+# kured - automatic node reboot manager. Upstream-first: the DaemonSet, RBAC
+# (ClusterRole + namespaced Role for the daemonset self-lock) and sentinel
+# hostPath mount all come from the pinned upstream release; only the
+# reboot-window args are a local patch. Upgrading is a version bump in this
+# URL + commit, same pattern as MetalLB/KEDA/Argo CD.
 resources:
-  - rbac.yaml
-  - daemonset.yaml
+  - https://github.com/kubereboot/kured/releases/download/1.15.0/kured-1.15.0-dockerhub.yaml
+
+patches:
+  - path: reboot-window-patch.yaml

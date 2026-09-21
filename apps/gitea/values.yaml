@@ -82,6 +82,17 @@ postgresql:
 postgresql-ha:
   enabled: true
 
+  # The chart's own values.yaml ships literal, publicly-published default
+  # passwords (postgresql.postgresPassword/password/repmgrPassword,
+  # pgpool.adminPassword/srCheckPassword) — existingSecret bypasses them
+  # entirely rather than overriding them with different literals in git.
+  # Sealed by scripts/06-seal-secrets.sh, same pattern as gitea-admin.
+  global:
+    postgresql:
+      existingSecret: postgresql-ha-credentials
+    pgpool:
+      existingSecret: postgresql-ha-pgpool-credentials
+
   postgresql:
     replicaCount: 2
     repmgrConnectTimeout: 5
@@ -138,8 +149,45 @@ gitea:
     actions:
       ENABLED: "true"
 
+    # Packages/container registry: deliberately kept on (chart default) —
+    # fits this platform's self-hosted CI/Actions/LFS trajectory, and now
+    # shares the same Garage-backed [storage] below rather than the PVC.
+    packages:
+      ENABLED: "true"
+
     security:
       INSTALL_LOCK: "true"
 
     webhook:
       ALLOWED_HOST_LIST: "*.svc.cluster.local"
+
+    # Default object storage backend for LFS, packages, actions
+    # artifacts/logs, attachments, avatars and repo-archive — each derives
+    # from this section unless it sets its own STORAGE_TYPE (none do here).
+    # Git repository data itself is not part of this and stays on the PVC.
+    # Credentials come from garage-gitea-storage-credentials via
+    # gitea.additionalConfigFromEnvs below, never as plaintext here.
+    storage:
+      STORAGE_TYPE: minio
+      MINIO_ENDPOINT: garage.atlantis.svc.cluster.local:3900
+      MINIO_BUCKET: gitea-storage
+      MINIO_LOCATION: garage
+      MINIO_USE_SSL: "false"
+      SERVE_DIRECT: "false"
+
+  # Minio credentials as env vars (GITEA__<SECTION>__<KEY> convention),
+  # sourced from a Secret rather than the plaintext gitea.config.storage
+  # block above. Secret is minted by the garage-bootstrap Job (RBAC in
+  # apps/gitea/rbac-garage-bootstrap.yaml), not sealed — same treatment as
+  # the other runtime-minted Garage credentials (garage-s3-credentials).
+  additionalConfigFromEnvs:
+    - name: GITEA__STORAGE__MINIO_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: garage-gitea-storage-credentials
+          key: access-key-id
+    - name: GITEA__STORAGE__MINIO_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: garage-gitea-storage-credentials
+          key: secret-access-key

@@ -1,0 +1,120 @@
+# Daily tar of the Gitea PVC (repo data + app state — apps/gitea/values.yaml
+# persistence.claimName: gitea-shared-storage, mounted read-only), uploaded
+# to the Garage platform-backups bucket. Complements
+# cronjob-backup-postgresql.yaml; see README's "Backups" section for what
+# this does and does not protect against.
+#
+# local-path PVCs are node-pinned (README: "Storage: local-path, its limits
+# ..."); podAffinity forces this Job's pod onto the same node as the running
+# Gitea pod so the read-only mount succeeds (RWO restricts by node, not pod
+# count — same-node multi-mount is fine).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-gitea-data
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: backup-gitea-data
+    app.kubernetes.io/part-of: source-control
+spec:
+  schedule: "0 1 * * *" # 01:00 local — before backup-postgresql and Kured's 02:00 window
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: backup-gitea-data
+        spec:
+          restartPolicy: OnFailure
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: gitea
+                  topologyKey: kubernetes.io/hostname
+          securityContext:
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: tar
+              image: alpine:3.20
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  tar -czf "/backup/gitea-data-$(date +%Y%m%dT%H%M%SZ).tar.gz" -C /data .
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: gitea-data
+                  mountPath: /data
+                  readOnly: true
+                - name: backup
+                  mountPath: /backup
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.17.62
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: garage-backups-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: garage-backups-credentials
+                      key: secret-access-key
+                - name: AWS_ENDPOINT_URL_S3
+                  value: "http://garage.atlantis.svc.cluster.local:3900"
+                - name: AWS_REGION
+                  value: "garage"
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  for f in /backup/*.tar.gz; do
+                    aws s3 cp "${f}" "s3://platform-backups/gitea-data/$(basename "${f}")"
+                  done
+                  cutoff=$(date -d '-14 days' +%Y%m%dT%H%M%SZ)
+                  aws s3 ls s3://platform-backups/gitea-data/ | awk '{print $4}' | while read -r key; do
+                    stamp=$(echo "${key}" | sed -E 's/gitea-data-([0-9TZ]+)\.tar\.gz/\1/')
+                    [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ] && aws s3 rm "s3://platform-backups/gitea-data/${key}"
+                  done
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+          volumes:
+            - name: gitea-data
+              persistentVolumeClaim:
+                claimName: gitea-shared-storage
+                readOnly: true
+            - name: backup
+              emptyDir: {}

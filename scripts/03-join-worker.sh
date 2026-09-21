@@ -10,6 +10,7 @@ source "${SCRIPT_DIR}/lib-functions.sh"
 
 VIP="${VIP:-172.16.10.50}"
 K3S_TOKEN="${K3S_TOKEN:?K3S_TOKEN is required. Get it from master1: cat /var/lib/rancher/k3s/server/node-token}"
+# Fallback for a standalone run only — see scripts/01-bootstrap-first-master.sh.
 K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
 
 require_root

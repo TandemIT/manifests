@@ -1,0 +1,37 @@
+# Lets the garage-bootstrap Job (atlantis namespace) create the two Secrets
+# it mints for this namespace: garage-gitea-storage-credentials (LFS/
+# packages/actions object storage) and garage-backups-credentials (backup
+# CronJobs). Lives here because the Role must be created in the gitea
+# namespace — same cross-namespace pattern as rbac-runner-bootstrap.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: garage-bootstrap-write
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: garage-bootstrap
+rules:
+  # create cannot be restricted by resourceName
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["garage-gitea-storage-credentials", "garage-backups-credentials"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: garage-bootstrap-write
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: garage-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: garage-bootstrap-write
+subjects:
+  - kind: ServiceAccount
+    name: garage-bootstrap
+    namespace: atlantis

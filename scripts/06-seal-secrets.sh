@@ -11,14 +11,17 @@
 #
 # Sealed files (commit all of them):
 #   apps/gitea/sealedsecret-gitea-admin.yaml
+#   apps/gitea/sealedsecret-postgresql-ha.yaml
+#   apps/gitea/sealedsecret-postgresql-ha-pgpool.yaml
 #   apps/gitea/sealedsecret-gitea-oidc-<slug>.yaml (optional, one per OIDC provider)
 #   apps/gitea/sealedsecret-gitea-ldap-<slug>.yaml (optional, one per LDAP provider)
 #   apps/anubis/sealedsecret-anubis-key.yaml
 #   apps/atlantis/garage/sealedsecret-garage-rpc.yaml
 #   apps/atlantis/sealedsecret-atlantis-vcs.yaml   (optional, prompted)
 #
-# Runtime tokens (runner registration, KEDA API, Garage S3) are NOT sealed —
-# they are minted in-cluster by the bootstrap Jobs in apps/gitea-runner/ and
+# Runtime tokens (runner registration, KEDA API, Garage S3, Garage-backed
+# Gitea object storage, backup credentials) are NOT sealed — they are minted
+# in-cluster by the bootstrap Jobs in apps/gitea-runner/ and
 # apps/atlantis/garage/.
 #
 # Requirements: kubectl (with cluster access), kubeseal, openssl.
@@ -136,7 +139,46 @@ else
   fi
 fi
 
-step_header 3 "Sealing atlantis/garage-rpc"
+step_header 3 "Sealing gitea/postgresql-ha-credentials + postgresql-ha-pgpool-credentials"
+OUT_PG="${MANIFESTS_DIR}/apps/gitea/sealedsecret-postgresql-ha.yaml"
+OUT_PGPOOL="${MANIFESTS_DIR}/apps/gitea/sealedsecret-postgresql-ha-pgpool.yaml"
+if [[ -f "${OUT_PG}" ]]; then
+  log "Exists: ${OUT_PG#"${MANIFESTS_DIR}"/} (delete the file to rotate)"
+else
+  # Reuses the live values if the chart's own secret already exists (it does
+  # on any cluster deployed before this SealedSecret was wired in) so this
+  # never silently rotates a running PostgreSQL cluster's passwords.
+  PG_SECRET="$(kubectl get secret -n gitea -l app.kubernetes.io/component=postgresql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  POSTGRES_PASS="$(live_value "${PG_SECRET}" gitea postgres-password)"
+  APP_PASS="$(live_value "${PG_SECRET}" gitea password)"
+  REPMGR_PASS="$(live_value "${PG_SECRET}" gitea repmgr-password)"
+  [[ -n "${POSTGRES_PASS}" ]] || POSTGRES_PASS="$(openssl rand -hex 24)"
+  [[ -n "${APP_PASS}" ]] || APP_PASS="$(openssl rand -hex 24)"
+  [[ -n "${REPMGR_PASS}" ]] || REPMGR_PASS="$(openssl rand -hex 24)"
+  seal_secret postgresql-ha-credentials gitea "${OUT_PG}" \
+    "postgres-password=${POSTGRES_PASS}" "password=${APP_PASS}" "repmgr-password=${REPMGR_PASS}"
+  add_resource "${MANIFESTS_DIR}/apps/gitea/kustomization.yaml" sealedsecret-postgresql-ha.yaml
+fi
+if [[ -f "${OUT_PGPOOL}" ]]; then
+  log "Exists: ${OUT_PGPOOL#"${MANIFESTS_DIR}"/} (delete the file to rotate)"
+else
+  PGPOOL_SECRET="$(kubectl get secret -n gitea -l app.kubernetes.io/component=pgpool -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  ADMIN_PASS="$(live_value "${PGPOOL_SECRET}" gitea admin-password)"
+  SRCHECK_PASS="$(live_value "${PGPOOL_SECRET}" gitea sr-check-password)"
+  [[ -n "${ADMIN_PASS}" ]] || ADMIN_PASS="$(openssl rand -hex 24)"
+  [[ -n "${SRCHECK_PASS}" ]] || SRCHECK_PASS="$(openssl rand -hex 24)"
+  seal_secret postgresql-ha-pgpool-credentials gitea "${OUT_PGPOOL}" \
+    "admin-password=${ADMIN_PASS}" "sr-check-password=${SRCHECK_PASS}"
+  add_resource "${MANIFESTS_DIR}/apps/gitea/kustomization.yaml" sealedsecret-postgresql-ha-pgpool.yaml
+fi
+echo ""
+echo "  IMPORTANT: postgresql-ha will only pick up these values on a FIRST"
+echo "  install (no existing postgresql-ha secret found) or if you already"
+echo "  rotated the live secret to match. Rotating on a running cluster"
+echo "  needs a coordinated change — see README's PostgreSQL credentials section."
+echo ""
+
+step_header 4 "Sealing atlantis/garage-rpc"
 OUT="${MANIFESTS_DIR}/apps/atlantis/garage/sealedsecret-garage-rpc.yaml"
 if [[ -f "${OUT}" ]]; then
   log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
@@ -147,7 +189,7 @@ else
   add_resource "${MANIFESTS_DIR}/apps/atlantis/garage/kustomization.yaml" sealedsecret-garage-rpc.yaml
 fi
 
-step_header 4 "Sealing anubis/anubis-key"
+step_header 5 "Sealing anubis/anubis-key"
 OUT="${MANIFESTS_DIR}/apps/anubis/sealedsecret-anubis-key.yaml"
 if [[ -f "${OUT}" ]]; then
   log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
@@ -162,7 +204,7 @@ fi
 # Supports any number of providers: terraform.tfvars' gitea_oidc_providers is
 # a map, keyed by slug. Falls back to a single interactive provider when
 # terraform.tfvars has none configured.
-step_header 5 "Sealing gitea OIDC providers"
+step_header 6 "Sealing gitea OIDC providers"
 
 PROVIDERS_JSON="{}"
 if command -v terraform >/dev/null 2>&1 && [[ -f "${MANIFESTS_DIR}/terraform/terraform.tfvars" ]]; then
@@ -255,7 +297,7 @@ log "Generated: apps/gitea/values-oidc.yaml (${PROVIDER_COUNT} provider(s))"
 # gitea_ldap_providers is a map keyed by slug, sealed into one secret per
 # provider (bindDn/bindPassword — the key names the Gitea chart expects),
 # then apps/gitea/values-ldap.yaml is regenerated from scratch every run.
-step_header 6 "Sealing gitea LDAP providers"
+step_header 7 "Sealing gitea LDAP providers"
 
 LDAP_JSON="{}"
 if command -v terraform >/dev/null 2>&1 && [[ -f "${MANIFESTS_DIR}/terraform/terraform.tfvars" ]]; then
@@ -319,7 +361,7 @@ LDAP_COUNT="$(LDAP_JSON="${LDAP_JSON}" python3 -c "import json,os; print(len(jso
 log "Generated: apps/gitea/values-ldap.yaml (${LDAP_COUNT} provider(s))"
 
 # Optional — needs a Gitea bot account + API token.
-step_header 7 "Sealing atlantis/atlantis-vcs"
+step_header 8 "Sealing atlantis/atlantis-vcs"
 OUT="${MANIFESTS_DIR}/apps/atlantis/sealedsecret-atlantis-vcs.yaml"
 if [[ -f "${OUT}" ]]; then
   log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"

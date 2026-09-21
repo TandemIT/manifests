@@ -147,18 +147,21 @@ Installed by `scripts/01-bootstrap-first-master.sh`: K3s and kube-vip on the nod
 
 ### Application Layer (Argo CD-managed)
 
-Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — KEDA CRDs before the runner ScaledObject, cert-manager CRDs before the issuers, Gitea before the runners and Atlantis. The network foundation (MetalLB VIP) already exists from bootstrap, so Traefik's LoadBalancer IP is available from the first sync. `scripts/04-deploy-apps.sh` remains as the script-driven alternative and as the runtime-initialization reference (runner tokens, Garage layout).
+Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — KEDA CRDs before the runner ScaledObject, cert-manager CRDs before the issuers, Atlantis/Garage before Gitea (Gitea's pod references Garage-minted S3 credentials), Gitea before the runners. The network foundation (MetalLB VIP) already exists from bootstrap, so Traefik's LoadBalancer IP is available from the first sync. `scripts/04-deploy-apps.sh` remains as the script-driven alternative and as the runtime-initialization reference (runner tokens, Garage layout).
 
-| Component      | Version | Namespace       | Purpose                                              |
-| -------------- | ------- | --------------- | ---------------------------------------------------- |
-| KEDA           | v2.15.1 | `keda`          | Event-driven pod autoscaling                         |
-| kured          | v1.15.0 | `kube-system`   | Automated rolling node reboot (weekdays 02:00–05:00) |
-| Traefik        | v3.3.4  | `traefik`       | Ingress controller + TCP proxy                       |
-| cert-manager   | v1.15.3 | `cert-manager`  | Automated TLS certificates via Let's Encrypt         |
-| Gitea          | 1.27.3  | `gitea`         | Self-hosted Git service with Actions support         |
-| PostgreSQL HA  | chart   | `gitea`         | Highly available database for Gitea                  |
-| Valkey Cluster | chart   | `gitea`         | Distributed cache and session store                  |
-| Act Runner     | 0.4.1   | `gitea-runners` | GitHub Actions-compatible CI/CD executor             |
+| Component                 | Version | Namespace        | Purpose                                                        |
+| -------------------------- | ------- | ---------------- | --------------------------------------------------------------- |
+| KEDA                       | v2.15.1 | `keda`           | Event-driven pod autoscaling                                    |
+| kured                      | v1.15.0 | `kube-system`    | Automated rolling node reboot (weekdays 02:00–05:00)            |
+| system-upgrade-controller  | v0.20.1 | `system-upgrade` | Automated K3s binary upgrades (weekdays 05:30–07:00)            |
+| sealed-secrets             | v2.17.4 | `kube-system`    | Encrypts secrets so they're safe to commit to git                |
+| Traefik                    | v3.3.4  | `traefik`        | Ingress controller + TCP proxy — 2 replicas, PDB enabled        |
+| cert-manager               | v1.15.3 | `cert-manager`   | Automated TLS certificates via Let's Encrypt                    |
+| Gitea                      | 1.27.3  | `gitea`          | Self-hosted Git service with Actions support                    |
+| PostgreSQL HA              | chart   | `gitea`          | HA database for Gitea — PDB and existingSecret from chart       |
+| Valkey Cluster             | chart   | `gitea`          | Distributed cache and session store — PDB from chart default    |
+| Act Runner                 | 0.4.1   | `gitea-runners`  | GitHub Actions-compatible CI/CD executor, ResourceQuota-capped  |
+| Atlantis + Garage          | chart   | `atlantis`       | Terraform automation + self-hosted S3-compatible object store   |
 
 ---
 
@@ -218,6 +221,12 @@ The PostgreSQL HA chart deploys:
 
 This means a PostgreSQL primary failure causes a brief pause while pgpool promotes the standby, after which Gitea automatically reconnects — rather than a full outage until a pod is rescheduled.
 
+**Credentials**: `postgresql-ha.global.postgresql.existingSecret` / `...pgpool.existingSecret` in `apps/gitea/values.yaml` point at `postgresql-ha-credentials` and `postgresql-ha-pgpool-credentials` — sealed the same way as `gitea-admin` (see [Secrets](#secrets-never-committed)) — rather than the chart's own published default passwords.
+
+**Drain protection**: both `postgresql-ha.postgresql.pdb` and `postgresql-ha.pgpool.pdb` default to `create: true` in the chart itself (`maxUnavailable: 1` each) and are not overridden here, so a PodDisruptionBudget already exists for both without needing to be declared in this repo's values.
+
+**Quorum**: with exactly 2 PostgreSQL replicas, a *network partition* between them (not a clean node death, which repmgr handles via promotion) has no arbiter. The chart supports a dedicated `witness` node for this; adding one is an open operator decision — not implemented, since it's a real resource-cost tradeoff this repo has not stated an intent on.
+
 ---
 
 ### Valkey Cluster for Caching
@@ -231,6 +240,46 @@ With 6 nodes in a 6-node cluster (3 CP + 3 workers), this guarantees:
 - A full node failure only takes down one shard, not the entire cache.
 
 This is deliberately over-provisioned for a platform of this scale — the goal is to demonstrate cluster-aware placement and HA patterns.
+
+**No password (`usePassword: false`)** is the Gitea chart's own explicit default for this deployment mode, not an oversight — Valkey's isolation instead depends entirely on `apps/gitea/networkpolicy-valkey.yaml` restricting access to Gitea pods only. Do not treat this as safe to copy elsewhere without the same NetworkPolicy in place.
+
+A PodDisruptionBudget (`maxUnavailable: 1` across all 6 pods) also comes from the `valkey-cluster` chart's own default (`pdb.create: true`), not from anything in this repo.
+
+---
+
+### Storage: local-path, its limits, and what moved to Garage
+
+Every PVC in this cluster (Gitea, PostgreSQL, Valkey, Atlantis, Garage itself) is bound by K3s's default `local-path` provisioner — there is no other StorageClass in this repo. That means each PV is pinned by `nodeAffinity` to the node it was first created on (a pod cannot move with its data to another node), has no online expansion (raising a chart's `size:` does not resize an existing PVC), and has no storage-level replication or snapshotting of its own.
+
+This is accepted as-is rather than "fixed" with an unproven CSI addition: PostgreSQL and Valkey compensate at the application layer (independent replicas on independent disks, not a shared volume), and Gitea's LFS/Packages/Actions-artifact growth — the data most likely to outgrow a fixed-size local PVC — now goes to Garage instead (below). A real fix for the underlying limitation (a replicated/CSI-backed StorageClass) is a separate infrastructure migration this repo does not have evidence to justify yet, and is not something `size:` bumps or new manifests here can substitute for.
+
+### Gitea Object Storage on Garage
+
+Gitea's `[storage]` app.ini section (`apps/gitea/values.yaml` → `gitea.config.storage`) points LFS, Packages, Actions artifacts/logs, attachments, avatars and repo-archive at the Garage S3-compatible store already running for Atlantis (`apps/atlantis/garage/`) — each of those derives from `[storage]` automatically unless it sets its own `STORAGE_TYPE` (none do). **Git repository data itself is not part of this and stays on the PVC** — Gitea has no S3 backend for raw repository storage.
+
+The Garage bootstrap Job (`apps/atlantis/garage/job-bootstrap.yaml`) mints a `gitea-storage` bucket and key the same way it already does for Atlantis's Terraform state, and writes the resulting credentials as `garage-gitea-storage-credentials` in the `gitea` namespace (cross-namespace RBAC in `apps/gitea/rbac-garage-bootstrap.yaml`, same pattern as `apps/gitea/rbac-runner-bootstrap.yaml`). Gitea consumes them via `gitea.additionalConfigFromEnvs` (`GITEA__STORAGE__MINIO_*` env vars from a `secretKeyRef`), never as plaintext in `gitea.config`.
+
+**This does not migrate existing data.** Any LFS objects, packages, or artifacts already written to the PVC before this was configured stay there; only new writes go to Garage. A one-time migration (copying `data/lfs`, `data/packages`, etc. into the new bucket and confirming Gitea reads them back) is a separate, deliberate operation — not performed automatically by this config change.
+
+### Backups
+
+`apps/gitea/cronjob-backup-postgresql.yaml` and `apps/gitea/cronjob-backup-gitea-data.yaml` run daily, dumping/tarring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
+
+- **PostgreSQL**: `pg_dump` against pgpool, gzipped, uploaded as `postgresql/gitea-<timestamp>.sql.gz`. 14-day retention, pruned by the same CronJob.
+- **Gitea repository data**: tars `data/git`, `data/gitea/conf`, and `data/gitea/gitea.db`-adjacent state from the Gitea PVC (mounted read-only, scheduled onto the same node as the Gitea pod since local-path is node-pinned), gzipped, uploaded as `gitea-data/gitea-data-<timestamp>.tar.gz`. Same 14-day retention.
+
+This is **replication ≠ backup**: PostgreSQL's streaming replication and Valkey's cluster replicas protect against a node dying, not against a bad migration, an accidental deletion, or logical corruption, which replicate to every copy just as faithfully as legitimate writes. Neither CronJob has been exercised as a restore yet — treat that as required before relying on either in an incident. Restore procedure:
+
+```bash
+# PostgreSQL: download the latest dump, then restore into a scratch database first
+aws --endpoint-url http://garage.atlantis.svc.cluster.local:3900 s3 cp \
+  s3://platform-backups/postgresql/gitea-<timestamp>.sql.gz - | gunzip | \
+  psql -h <pgpool-service> -U postgres -d gitea_restore_test
+
+# Gitea data: download and inspect into a scratch path before ever touching the live PVC
+aws --endpoint-url http://garage.atlantis.svc.cluster.local:3900 s3 cp \
+  s3://platform-backups/gitea-data/gitea-data-<timestamp>.tar.gz - | tar -tzv | head
+```
 
 ---
 
@@ -248,15 +297,15 @@ The termination grace period is set to **3660 seconds** (one hour plus one minut
 
 ### KEDA for Runner Autoscaling
 
-The runner `Deployment` starts at **0 replicas**. KEDA watches the Gitea Actions job queue (via the `github-runner` trigger, which is Gitea-compatible) and scales the deployment based on queued job count:
+The runner `Deployment` holds a **warm floor of 5 replicas**. KEDA watches the Gitea Actions job queue (via the `github-runner` trigger, which is Gitea-compatible) and scales the deployment based on queued job count:
 
 | Condition         | Replicas                                                     |
 | ----------------- | ------------------------------------------------------------ |
-| No jobs queued    | 0 (or 2 if Gitea API is unreachable for 3 consecutive polls) |
+| No jobs queued    | 5 (floor — also the fallback if the Gitea API is unreachable for 3 consecutive polls) |
 | Jobs queued       | 1 runner per queued job, up to 10                            |
-| Post-job cooldown | Scales back down after 120 seconds                           |
+| Post-job cooldown | Scales back down to the floor after 120 seconds              |
 
-The **fallback minimum of 2** exists as a safety net: if the Gitea API is temporarily unreachable, KEDA switches to fallback mode and maintains a minimum 2 runners rather than scaling to zero, preventing jobs from getting stuck with no runner available.
+A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/base/resourcequota.yaml`) caps the worst case so a burst toward 10 replicas cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
 
 ---
 
@@ -384,22 +433,28 @@ bash scripts/05-reset-apps.sh
 
 Generated once by `scripts/01-bootstrap-first-master.sh` (Argo CD syncs manifests but cannot invent secret material):
 
-| Secret                      | Namespace       | Contents                                        |
-| --------------------------- | --------------- | ----------------------------------------------- |
-| `gitea-admin`               | `gitea`         | Gitea admin username + password                 |
-| `garage-rpc`                | `atlantis`      | Garage cluster RPC secret                       |
-| `anubis-key`                | `anubis`        | Anubis ED25519 signing key                      |
-| `gitea-runner-registration` | `gitea-runners` | Act Runner registration token (placeholder)     |
-| `gitea-api-token`           | `gitea-runners` | Gitea API token for KEDA scaler (placeholder)   |
+| Secret                             | Namespace       | Contents                                        |
+| ----------------------------------- | --------------- | ----------------------------------------------- |
+| `gitea-admin`                       | `gitea`         | Gitea admin username + password                 |
+| `postgresql-ha-credentials`         | `gitea`         | PostgreSQL superuser, app-DB user, repmgr passwords |
+| `postgresql-ha-pgpool-credentials`  | `gitea`         | pgpool admin + health-check passwords            |
+| `garage-rpc`                        | `atlantis`      | Garage cluster RPC secret                       |
+| `anubis-key`                        | `anubis`        | Anubis ED25519 signing key                      |
+| `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
+| `gitea-api-token`                   | `gitea-runners` | Gitea API token for KEDA scaler (placeholder)   |
 
-Created after Gitea is running (`scripts/04-deploy-apps.sh` steps 9–12 replace the placeholders and add these):
+Sealed the same way as `gitea-admin` by `scripts/06-seal-secrets.sh` — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 
-| Secret                  | Namespace  | Contents                                          |
-| ----------------------- | ---------- | ------------------------------------------------- |
-| `atlantis-vcs`          | `atlantis` | Gitea bot username, API token, webhook secret     |
-| `garage-s3-credentials` | `atlantis` | S3 access key for the Terraform state bucket      |
+Created after Gitea is running (`scripts/04-deploy-apps.sh` steps 9–12, or `apps/atlantis/garage/job-bootstrap.yaml` in the GitOps path, replace the placeholders and add these):
 
-PostgreSQL and Valkey credentials are managed by the Gitea Helm chart itself (static chart values; Valkey runs without a password inside the cluster, both are isolated by NetworkPolicies).
+| Secret                             | Namespace  | Contents                                              |
+| ------------------------------------ | ---------- | ------------------------------------------------------ |
+| `atlantis-vcs`                      | `atlantis` | Gitea bot username, API token, webhook secret          |
+| `garage-s3-credentials`             | `atlantis` | S3 access key for the Terraform state bucket            |
+| `garage-gitea-storage-credentials`  | `gitea`    | S3 access key for Gitea's LFS/packages/actions storage  |
+| `garage-backups-credentials`        | `gitea`    | S3 access key for the PostgreSQL/Gitea backup CronJobs  |
+
+Valkey runs without a password inside the cluster — an explicit upstream chart default for this deployment mode, not an oversight — and is isolated entirely by `apps/gitea/networkpolicy-valkey.yaml`.
 
 ---
 
@@ -442,7 +497,7 @@ The GitOps control layer — the only directory Argo CD needs to be pointed at o
 
 - **install/**: Kustomization pinning the upstream Argo CD release manifest (plus the `argocd-cm` patch that restores the Application health check required for app-of-apps wave ordering). Applied once by `scripts/01-bootstrap-first-master.sh`; afterwards Argo CD manages its own installation from here.
 - **root-app.yaml**: The root Application (app-of-apps). Points at `argocd/apps/` — the single manifest the bootstrap script applies imperatively.
-- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `sealed-secrets` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `gitea` (5, Helm chart with values from this repo) → `gitea-runner`, `atlantis` (6). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
+- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `system-upgrade-controller`, `sealed-secrets` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `atlantis` (5, Garage + its bootstrap Job mint the S3 credentials Gitea's pod spec references) → `gitea` (6, Helm chart with values from this repo) → `gitea-runner` (7). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
 
 ### platform/
 
@@ -457,11 +512,12 @@ The network foundation — everything that defines the cluster's addresses. Owne
 Contains application-specific Kubernetes manifests and Kustomize overlays:
 
 - **keda/**: KEDA operator (upstream release manifest + host-alias patch pointing `git.open-ict.hu` at the MetalLB VIP).
-- **kured/**: kured DaemonSet and RBAC for automated node reboots.
+- **kured/**: upstream kured release manifest (DaemonSet, RBAC, sentinel hostPath mount) + a local patch for the reboot window only.
+- **system-upgrade-controller/**: upstream CRDs + controller for automated K3s upgrades, plus the local server/agent `Plan` resources.
 - **traefik/**: Ingress controller configuration. The `base/` subdirectory includes deployment, service, RBAC, and IngressClass resources.
 - **cert-manager/**: PKI automation for TLS certificates. Includes `base/` for upstream release and `issuers/` for Let's Encrypt ClusterIssuers.
-- **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, and Valkey.
-- **gitea-runner/**: CI/CD runner deployment. The `base/` subdirectory includes the runner Deployment, KEDA ScaledObject for autoscaling, and NetworkPolicy for isolation.
+- **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment (including the Garage-backed object storage and postgresql-ha credential wiring). - `cronjob-backup-*.yaml`: PostgreSQL and Gitea-data backups to Garage. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, Valkey, and Garage.
+- **gitea-runner/**: CI/CD runner deployment. The `base/` subdirectory includes the runner Deployment, KEDA ScaledObject for autoscaling, ResourceQuota for burst protection, and NetworkPolicy for isolation.
 - **anubis/**: Example application with its own namespace, certificate, deployment, service, ingress, middleware, and network policies.
 
 - **namespace.yaml**: Defines the Kubernetes namespace for the component.

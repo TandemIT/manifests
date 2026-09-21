@@ -1,0 +1,34 @@
+# system-upgrade-controller - automated K3s upgrades. Independent of
+# everything else; wave 1 alongside keda/kured/sealed-secrets. CRDs and Plan
+# CRs sync together — Argo CD applies CRDs before custom resources within
+# the same wave regardless of manifest order.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: system-upgrade-controller
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TandemIT/manifests.git
+    targetRevision: master
+    path: apps/system-upgrade-controller
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: system-upgrade
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

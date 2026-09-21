@@ -15,6 +15,13 @@ deployment:
     # The chart exposes metrics on the dedicated "metrics" entrypoint.
     prometheus.io/port: "9100"
 
+# Chart default is disabled. With 2 replicas + hard anti-affinity below,
+# maxUnavailable: 1 keeps one Traefik pod serving ingress through any single
+# node drain (Kured, and once introduced, system-upgrade-controller).
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
 affinity:
   podAntiAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:

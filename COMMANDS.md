@@ -21,6 +21,8 @@ MetalLB manages LoadBalancer services (L2 mode):
 | kube-vip  | v0.8.7               |
 | MetalLB   | v0.14.9              |
 | kured     | v1.15.0              |
+| system-upgrade-controller | v0.20.1 |
+| sealed-secrets | v2.17.4          |
 | KEDA      | v2.15.1              |
 | Traefik   | v3.3.4 (chart 34.4.1) |
 | Gitea     | 1.23.8 (chart ~12.5) |
@@ -284,7 +286,7 @@ kubectl get secret gitea-api-token -n gitea-runners -o jsonpath='{.data.token}' 
 
 ## kured reboot window
 
-Edit [apps/kured/daemonset.yaml](apps/kured/daemonset.yaml) to change the maintenance window.
+Edit [apps/kured/reboot-window-patch.yaml](apps/kured/reboot-window-patch.yaml) to change the maintenance window (the DaemonSet itself is the pinned upstream release manifest — this patch is the only local override).
 
 Default: Mon–Fri, 02:00–05:00 local time, checked every hour.
 

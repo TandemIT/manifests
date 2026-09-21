@@ -1,6 +1,13 @@
 # Connects the Garage replicas into one cluster, applies the layout, and
-# mints the S3 credentials for the Atlantis Terraform state backend — the
-# GitOps replacement for scripts/04-deploy-apps.sh steps 11–12.
+# mints S3 credentials for every Garage consumer: Atlantis's Terraform state
+# backend, Gitea's LFS/packages/actions object storage, and the PostgreSQL +
+# Gitea-data backup CronJobs. The GitOps replacement for
+# scripts/04-deploy-apps.sh steps 11–12.
+#
+# The gitea-storage and platform-backups secrets are created in the gitea
+# namespace, not atlantis — cross-namespace RBAC for that is in
+# apps/gitea/rbac-garage-bootstrap.yaml (same pattern as
+# apps/gitea/rbac-runner-bootstrap.yaml for the runner-token-bootstrap Job).
 #
 # Wave ordering inside this app: Garage StatefulSet (wave 0) → this Job
 # (wave 1) → Atlantis StatefulSet (wave 2), so Atlantis only starts once
@@ -80,6 +87,43 @@ spec:
                 echo "Created: atlantis/garage-s3-credentials"
               else
                 echo "Exists: atlantis/garage-s3-credentials"
+              fi
+
+              # Gitea's LFS/packages/actions-artifact object storage (own bucket + key
+              # so its access is scoped separately from the Terraform state backend).
+              if ! kubectl get secret garage-gitea-storage-credentials -n gitea >/dev/null 2>&1; then
+                key_info=$(garage garage-0 key create gitea-storage)
+                access_key=$(echo "${key_info}" | awk '/^Key ID:/{print $3}')
+                secret_key=$(echo "${key_info}" | awk '/^Secret key:/{print $3}')
+                [ -n "${access_key}" ] && [ -n "${secret_key}" ]
+
+                garage garage-0 bucket create gitea-storage || true
+                garage garage-0 bucket allow --read --write --owner gitea-storage --key "${access_key}"
+
+                kubectl create secret generic garage-gitea-storage-credentials -n gitea \
+                  --from-literal=access-key-id="${access_key}" \
+                  --from-literal=secret-access-key="${secret_key}"
+                echo "Created: gitea/garage-gitea-storage-credentials"
+              else
+                echo "Exists: gitea/garage-gitea-storage-credentials"
+              fi
+
+              # PostgreSQL + Gitea-data backup CronJobs (apps/gitea/cronjob-backup-*.yaml).
+              if ! kubectl get secret garage-backups-credentials -n gitea >/dev/null 2>&1; then
+                key_info=$(garage garage-0 key create platform-backups)
+                access_key=$(echo "${key_info}" | awk '/^Key ID:/{print $3}')
+                secret_key=$(echo "${key_info}" | awk '/^Secret key:/{print $3}')
+                [ -n "${access_key}" ] && [ -n "${secret_key}" ]
+
+                garage garage-0 bucket create platform-backups || true
+                garage garage-0 bucket allow --read --write --owner platform-backups --key "${access_key}"
+
+                kubectl create secret generic garage-backups-credentials -n gitea \
+                  --from-literal=access-key-id="${access_key}" \
+                  --from-literal=secret-access-key="${secret_key}"
+                echo "Created: gitea/garage-backups-credentials"
+              else
+                echo "Exists: gitea/garage-backups-credentials"
               fi
           resources:
             requests:

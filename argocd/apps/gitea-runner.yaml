@@ -1,13 +1,16 @@
 # Act Runner + KEDA ScaledObject. The runtime tokens are minted against the
 # live Gitea API by the in-app runner-token-bootstrap Job (wave 0); the
 # Deployment and ScaledObject sync at wave 1, after real tokens exist.
+# App-level wave 7: after the "gitea" Application (wave 6) so the Gitea API
+# it registers against is already being deployed (the Job itself still
+# polls /api/healthz and waits, this just avoids an unnecessary early race).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: gitea-runner
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-wave: "7"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:

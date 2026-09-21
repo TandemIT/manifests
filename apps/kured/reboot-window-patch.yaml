@@ -1,0 +1,21 @@
+# The only cluster-specific customization over upstream: the reboot window
+# and polling period. Upstream's own --reboot-sentinel flag (and the
+# /sentinel hostPath mount it depends on) is left untouched.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kured
+  namespace: kube-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: kured
+          command:
+            - /usr/bin/kured
+            - --reboot-sentinel=/sentinel/reboot-required
+            - --reboot-days=mon,tue,wed,thu,fri
+            - --start-time=02:00
+            - --end-time=05:00
+            - --time-zone=Local
+            - --period=1h

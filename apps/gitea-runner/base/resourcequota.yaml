@@ -1,0 +1,27 @@
+# Hard ceiling on a runner burst so it cannot starve platform workloads
+# sharing the same schedulable nodes (control-plane nodes are untainted).
+#
+# Sized against terraform/terraform.tfvars.example's node defaults (3x 2CPU/4Gi
+# control-plane + 3x 1CPU/2Gi workers = 9 CPU / 18Gi cluster-wide) — the real
+# terraform.tfvars is gitignored, so live sizing is unverified. These limits
+# are deliberately conservative given that; re-check against `kubectl describe
+# node` and raise if live capacity is larger.
+#
+# At maxReplicaCount: 10 (scaledobject.yaml) the theoretical worst case is
+# ~15 CPU / 15Gi limits (10 x (dind 1CPU/1Gi + runner 500m/512Mi)). This quota
+# caps that around 7-8 concurrent runners instead — the rest queue as Pending
+# rather than contending with Postgres/Valkey/Traefik/Argo CD for CPU.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gitea-runner-burst-guard
+  labels:
+    app.kubernetes.io/name: gitea-runner
+    app.kubernetes.io/part-of: ci-runners
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 6Gi
+    limits.cpu: "8"
+    limits.memory: 10Gi
+    count/pods: "24"

@@ -1,0 +1,36 @@
+# Control-plane K3s upgrades. concurrency: 1 — only one control-plane node
+# is cordoned/drained/upgraded at a time, preserving etcd quorum (tolerates
+# losing 1 of 3). Channel pinned to the v1.32 minor already running in this
+# cluster (terraform/terraform.tfvars.example k3s_version: v1.32.3+k3s1) —
+# patch releases apply automatically, a minor bump is a deliberate change to
+# this file. Window is disjoint from kured's Mon-Fri 02:00-05:00 (README):
+# starts 30 min after kured's window closes so a K3s upgrade never contends
+# with a nightly reboot cycle on the same node.
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: k3s-server
+  namespace: system-upgrade
+  labels:
+    k3s-upgrade: server
+spec:
+  concurrency: 1
+  cordon: true
+  serviceAccountName: system-upgrade
+  channel: https://update.k3s.io/v1-release/channels/v1.32
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  window:
+    days: [mon, tue, wed, thu, fri]
+    startTime: "05:30"
+    endTime: "07:00"
+    timeZone: Local
+  drain:
+    force: true
+    ignoreDaemonSets: true
+    deleteEmptydirData: true
+    gracePeriod: 90
+  upgrade:
+    image: rancher/k3s-upgrade

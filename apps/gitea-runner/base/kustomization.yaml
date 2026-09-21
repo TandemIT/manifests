@@ -19,3 +19,4 @@ resources:
   - triggerauthentication.yaml
   - networkpolicy.yaml
   - networkpolicy-metrics.yaml
+  - resourcequota.yaml

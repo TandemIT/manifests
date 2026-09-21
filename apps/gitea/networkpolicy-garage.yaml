@@ -1,0 +1,113 @@
+---
+# Gitea's own LFS/packages/actions-artifact storage traffic to Garage.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gitea-garage-allow
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/part-of: source-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gitea
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atlantis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: garage
+      ports:
+        - protocol: TCP
+          port: 3900
+---
+# backup-postgresql CronJob: pgpool (dump source) + Garage (upload target).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backup-postgresql-egress
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: backup-postgresql
+    app.kubernetes.io/part-of: source-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backup-postgresql
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: pgpool
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atlantis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: garage
+      ports:
+        - protocol: TCP
+          port: 3900
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# backup-gitea-data CronJob: Garage (upload target) only — reads the PVC
+# directly, no PostgreSQL access needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backup-gitea-data-egress
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: backup-gitea-data
+    app.kubernetes.io/part-of: source-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backup-gitea-data
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atlantis
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: garage
+      ports:
+        - protocol: TCP
+          port: 3900
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

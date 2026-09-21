@@ -1,0 +1,122 @@
+# Daily logical backup of the gitea database, uploaded to the Garage
+# platform-backups bucket. This is NOT a substitute for PostgreSQL-HA's
+# streaming replication (which protects against a node dying, not a bad
+# migration or accidental deletion) — see README's "Backups" section.
+#
+# Host/user/db match postgresql-ha.global.postgresql.{username,database} in
+# values.yaml ("gitea"/"gitea"); password is the app-user key ("password")
+# from the same postgresql-ha-credentials secret the chart itself consumes,
+# not the superuser. Service name is the chart's standard subchart naming
+# (gitea-postgresql-ha-pgpool — confirmed from the pinned chart's
+# _helpers.tpl, not guessed).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-postgresql
+  namespace: gitea
+  labels:
+    app.kubernetes.io/name: backup-postgresql
+    app.kubernetes.io/part-of: source-control
+spec:
+  schedule: "30 1 * * *" # 01:30 local — before Kured's 02:00 window
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: backup-postgresql
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: dump
+              image: bitnamilegacy/postgresql:17
+              env:
+                - name: PGHOST
+                  value: gitea-postgresql-ha-pgpool.gitea.svc.cluster.local
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  value: gitea
+                - name: PGDATABASE
+                  value: gitea
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql-ha-credentials
+                      key: password
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  pg_dump --no-owner --format=plain | gzip -9 > "/backup/gitea-$(date +%Y%m%dT%H%M%SZ).sql.gz"
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.17.62
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: garage-backups-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: garage-backups-credentials
+                      key: secret-access-key
+                - name: AWS_ENDPOINT_URL_S3
+                  value: "http://garage.atlantis.svc.cluster.local:3900"
+                - name: AWS_REGION
+                  value: "garage"
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  for f in /backup/*.sql.gz; do
+                    aws s3 cp "${f}" "s3://platform-backups/postgresql/$(basename "${f}")"
+                  done
+                  # 14-day retention: delete objects older than 14 days.
+                  cutoff=$(date -d '-14 days' +%Y%m%dT%H%M%SZ)
+                  aws s3 ls s3://platform-backups/postgresql/ | awk '{print $4}' | while read -r key; do
+                    stamp=$(echo "${key}" | sed -E 's/gitea-([0-9TZ]+)\.sql\.gz/\1/')
+                    [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ] && aws s3 rm "s3://platform-backups/postgresql/${key}"
+                  done
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1001
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+          volumes:
+            - name: backup
+              emptyDir: {}

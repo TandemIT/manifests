@@ -21,6 +21,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib-functions.sh"
 
 VIP="${VIP:-172.16.10.50}"
+# Fallback for a standalone run only — the deploy.sh/Ansible path always
+# passes K3S_VERSION from terraform/variables.tf's k3s_version (the real
+# source of truth; see terraform/main.tf's ansible_inventory). Keep this
+# default in sync with variables.tf's default by hand.
 K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
 
 MANIFESTS_DIR="${SCRIPT_DIR}/.."

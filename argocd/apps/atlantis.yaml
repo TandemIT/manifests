@@ -1,15 +1,22 @@
 # Atlantis + Garage S3 backend. In-app wave ordering: Garage (wave 0) →
-# garage-bootstrap Job (wave 1: cluster layout + S3 credentials) → Atlantis
-# StatefulSet (wave 2). atlantis-vcs is a SealedSecret from
-# scripts/06-seal-secrets.sh; until it is sealed and committed, Atlantis
-# stays in CreateContainerConfigError and Argo CD reports Progressing.
+# garage-bootstrap Job (wave 1: cluster layout + S3 credentials for
+# Atlantis, Gitea object storage, and backups) → Atlantis StatefulSet
+# (wave 2). atlantis-vcs is a SealedSecret from scripts/06-seal-secrets.sh;
+# until it is sealed and committed, Atlantis stays in
+# CreateContainerConfigError and Argo CD reports Progressing.
+#
+# App-level wave is 5 (before gitea-config's namespace/RBAC-dependent "gitea"
+# Application at wave 6): the garage-bootstrap Job writes
+# garage-gitea-storage-credentials and garage-backups-credentials into the
+# gitea namespace, which the Gitea Helm release's pod spec references via
+# secretKeyRef — those Secrets must exist before Gitea's pod is created.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: atlantis
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-wave: "5"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:

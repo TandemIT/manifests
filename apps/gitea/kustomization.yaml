@@ -7,9 +7,13 @@ resources:
   - sealedsecret-gitea-oidc-authentik.yaml
   - namespace.yaml
   - rbac-runner-bootstrap.yaml
+  - rbac-garage-bootstrap.yaml
   - middleware.yaml
   - ingressroute-tcp.yaml
   - networkpolicy.yaml
   - networkpolicy-certmanager.yaml
   - networkpolicy-valkey.yaml
   - networkpolicy-postgresql.yaml
+  - networkpolicy-garage.yaml
+  - cronjob-backup-postgresql.yaml
+  - cronjob-backup-gitea-data.yaml

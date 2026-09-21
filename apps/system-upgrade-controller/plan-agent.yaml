@@ -1,0 +1,36 @@
+# Worker K3s upgrades. prepare references the k3s-server Plan by name — SUC's
+# documented dependency mechanism for the standard k3s server-before-agent
+# upgrade order (the rancher/k3s-upgrade image's own "prepare" subcommand
+# blocks until that Plan has applied on its nodes). Same window/channel/
+# concurrency reasoning as plan-server.yaml.
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: k3s-agent
+  namespace: system-upgrade
+  labels:
+    k3s-upgrade: agent
+spec:
+  concurrency: 1
+  cordon: true
+  serviceAccountName: system-upgrade
+  channel: https://update.k3s.io/v1-release/channels/v1.32
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: DoesNotExist
+  window:
+    days: [mon, tue, wed, thu, fri]
+    startTime: "05:30"
+    endTime: "07:00"
+    timeZone: Local
+  prepare:
+    image: rancher/k3s-upgrade
+    args: ["prepare", "k3s-server"]
+  drain:
+    force: true
+    ignoreDaemonSets: true
+    deleteEmptydirData: true
+    gracePeriod: 90
+  upgrade:
+    image: rancher/k3s-upgrade

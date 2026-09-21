@@ -22,6 +22,15 @@ spec:
       ports:
         - protocol: TCP
           port: 3900
+    # S3 API access from the gitea namespace: Gitea itself (LFS/packages/
+    # actions storage) and the two backup CronJobs (platform-backups bucket).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+      ports:
+        - protocol: TCP
+          port: 3900
     # Inter-node replication RPC between Garage pods
     - from:
         - podSelector:
