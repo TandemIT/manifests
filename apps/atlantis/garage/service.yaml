@@ -1,11 +1,11 @@
-# No Terraform/OpenTofu workflow currently uses Garage as a state backend
-# (Atlantis, the previous consumer, has been removed; this repo's own
-# cluster-provisioning terraform/ uses local state). If a future Gitea
-# Actions workflow needs one, it would use path-style S3 config against
-# this Service (http://garage.atlantis.svc.cluster.local:3900), backed by a
-# bucket + key minted the same way as apps/atlantis/garage/job-bootstrap.yaml
-# already does for gitea-storage/platform-backups — not set up here since
-# no such workflow exists yet.
+# No Terraform/OpenTofu workflow currently uses Garage (this repo's own
+# cluster-provisioning terraform/ uses local state; Atlantis, the only past
+# Garage-backed consumer, has been removed). If a future Gitea Actions
+# workflow needs remote state, it should use Gitea's native Terraform State
+# Registry (backend "http", not S3 — see README's "Terraform/OpenTofu state"
+# section) rather than a new Garage bucket: Gitea 1.27.3 supports it
+# natively, and its data already flows through Garage via the existing
+# gitea-storage bucket/[storage] config, no separate bucket needed.
 apiVersion: v1
 kind: Service
 metadata:

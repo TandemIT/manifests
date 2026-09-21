@@ -152,6 +152,8 @@ gitea:
     # Packages/container registry: deliberately kept on (chart default) —
     # fits this platform's self-hosted CI/Actions/LFS trajectory, and now
     # shares the same Garage-backed [storage] below rather than the PVC.
+    # This flag also gates Gitea's native Terraform/OpenTofu State Registry
+    # (backend "http") — no separate config or Garage bucket needed for it.
     packages:
       ENABLED: "true"
 

@@ -263,6 +263,30 @@ The Garage bootstrap Job (`apps/atlantis/garage/job-bootstrap.yaml`) mints a `gi
 
 **This does not migrate existing data.** Any LFS objects, packages, or artifacts already written to the PVC before this was configured stay there; only new writes go to Garage. A one-time migration (copying `data/lfs`, `data/packages`, etc. into the new bucket and confirming Gitea reads them back) is a separate, deliberate operation — not performed automatically by this config change.
 
+### Terraform/OpenTofu State
+
+Gitea 1.27.3 has a native Terraform State Registry (`backend "http"`, confirmed against the pinned version's actual source — not assumed from current docs): state upload/fetch, versioning by serial number, and locking (`POST`/`DELETE` on a `/lock` sub-route) are all built in, gated by the same `gitea.config.packages.ENABLED` flag already set above — no extra Gitea config, and no separate Garage bucket, since state data flows through the same `[storage]` → `gitea-storage` bucket as LFS/Packages. This replaces the Garage `terraform-state` bucket Atlantis used to bootstrap (removed along with Atlantis — see below).
+
+No Terraform/OpenTofu workflow in this repo currently uses it — this repo's own cluster-provisioning `terraform/` uses local state, and no other backend configuration exists anywhere. If a future Gitea Actions workflow needs remote state, it authenticates with a Gitea personal access token (`write:package` scope) stored as a Gitea Actions secret, not a long-lived S3 credential:
+
+```hcl
+terraform {
+  backend "http" {
+    address        = "http://gitea-http.gitea.svc.cluster.local:3000/api/packages/{owner}/terraform/state/{name}"
+    lock_address   = "http://gitea-http.gitea.svc.cluster.local:3000/api/packages/{owner}/terraform/state/{name}/lock"
+    unlock_address = "http://gitea-http.gitea.svc.cluster.local:3000/api/packages/{owner}/terraform/state/{name}/lock"
+    lock_method    = "POST"
+    unlock_method  = "DELETE"
+    username       = "{gitea-username}"
+    password       = "{personal-access-token}"
+  }
+}
+```
+
+Use a private-visibility owner (user or org) for `{owner}` — Gitea's package permission model follows repo/org visibility, and this is not anonymous-safe on a public one.
+
+**Backup gap**: like the rest of the Garage-backed Gitea storage above, state data is **not** covered by either backup CronJob below — `cronjob-backup-postgresql.yaml` only dumps the Postgres database (package/state *metadata*, not the state file content), and `cronjob-backup-gitea-data.yaml` only tars the Gitea PVC, not the Garage `gitea-storage` bucket. This is an existing, pre-dating gap (also true for LFS/Packages/Actions artifacts), not something introduced by moving Terraform state here — flagged, not fixed, as part of this change.
+
 ### Backups
 
 `apps/gitea/cronjob-backup-postgresql.yaml` and `apps/gitea/cronjob-backup-gitea-data.yaml` run daily, dumping/tarring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
