@@ -6,8 +6,10 @@
 # installs it and applies the root app-of-apps (argocd/), which deploys
 # everything in this repo declaratively. On the GitOps path this script is
 # only needed for the runtime pieces Argo CD cannot do:
-#   step 9      — mint runner registration + KEDA API tokens against live Gitea
-#   steps 10-12 — Atlantis VCS secret, Garage cluster layout, S3 credentials
+#   step 7  — Garage cluster layout + S3 credentials (Gitea object storage,
+#             platform backups) — must exist before Gitea starts, since its
+#             pod spec references a Garage-minted Secret
+#   step 10 — mint runner registration + KEDA API tokens against live Gitea
 # Running the whole script against an Argo CD-managed cluster is safe:
 # resources it applies are adopted by Argo CD on the next sync.
 
@@ -40,8 +42,6 @@ for ns in traefik cert-manager gitea gitea-runners anubis atlantis; do
   ensure_namespace "${ns}"
 done
 
-# atlantis-vcs is created in Step 10, after Gitea is running, so the operator
-# can create the bot account and obtain the API token first.
 step_header 3 "Generating secrets"
 
 if ! kubectl get secret gitea-admin -n gitea >/dev/null 2>&1; then
@@ -164,8 +164,84 @@ kubectl rollout status deployment/"${TRAEFIK_DEPLOYMENT}" -n traefik --timeout=1
 step_header 6 "Deploying Anubis"
 apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
 
-# Must come before Atlantis — Atlantis connects to Gitea on startup.
-step_header 7 "Deploying Gitea"
+# Must come before Gitea — Gitea's pod spec references garage-gitea-storage-
+# credentials via secretKeyRef and fails to start (CreateContainerConfigError)
+# until it exists.
+step_header 7 "Deploying Garage storage"
+apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
+
+log "Waiting for Garage to be ready..."
+kubectl rollout status statefulset/garage -n atlantis --timeout=300s
+
+# Connect the replicas into one Garage cluster.
+# Idempotent: "node connect" is a no-op for peers that are already known.
+GARAGE_REPLICAS=3
+for i in $(seq 1 $((GARAGE_REPLICAS - 1))); do
+  PEER_ID=$(kubectl exec -n atlantis "garage-${i}" -- /garage -c /etc/garage/garage.toml node id -q)
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml node connect "${PEER_ID}"
+done
+
+# Assign a layout role to every node that lacks one (fresh cluster: all three).
+# 50G per node with replication_factor=3 gives ~50G usable capacity.
+if kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+    | grep -q "NO ROLE ASSIGNED"; then
+  for NODE_ID in $(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+      | awk '/NO ROLE ASSIGNED/{print $1}'); do
+    kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+      layout assign -z dc1 -c 50G "${NODE_ID}"
+  done
+  # Next layout version is always current + 1 (fresh cluster: 0 + 1).
+  CUR_LAYOUT=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml layout show 2>/dev/null \
+    | awk '/layout version:/{v=$NF} END{print v+0}')
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    layout apply --version $((CUR_LAYOUT + 1))
+  log "Applied Garage cluster layout"
+else
+  log "Exists: Garage cluster layout"
+fi
+
+# Gitea's LFS/packages/actions-artifact object storage (own bucket + key so
+# its access is scoped separately from the backups bucket).
+if ! kubectl get secret garage-gitea-storage-credentials -n gitea >/dev/null 2>&1; then
+  KEY_INFO=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    key create gitea-storage 2>/dev/null)
+  ACCESS_KEY=$(echo "${KEY_INFO}" | awk '/^Key ID:/{print $3}')
+  SECRET_KEY=$(echo "${KEY_INFO}" | awk '/^Secret key:/{print $3}')
+
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    bucket create gitea-storage 2>/dev/null || true
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    bucket allow --read --write --owner gitea-storage --key "${ACCESS_KEY}"
+
+  kubectl create secret generic garage-gitea-storage-credentials -n gitea \
+    --from-literal=access-key-id="${ACCESS_KEY}" \
+    --from-literal=secret-access-key="${SECRET_KEY}"
+  log "Created: gitea/garage-gitea-storage-credentials"
+else
+  log "Exists: gitea/garage-gitea-storage-credentials"
+fi
+
+# PostgreSQL + Gitea-data backup CronJobs (apps/gitea/cronjob-backup-*.yaml).
+if ! kubectl get secret garage-backups-credentials -n gitea >/dev/null 2>&1; then
+  KEY_INFO=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    key create platform-backups 2>/dev/null)
+  ACCESS_KEY=$(echo "${KEY_INFO}" | awk '/^Key ID:/{print $3}')
+  SECRET_KEY=$(echo "${KEY_INFO}" | awk '/^Secret key:/{print $3}')
+
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    bucket create platform-backups 2>/dev/null || true
+  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    bucket allow --read --write --owner platform-backups --key "${ACCESS_KEY}"
+
+  kubectl create secret generic garage-backups-credentials -n gitea \
+    --from-literal=access-key-id="${ACCESS_KEY}" \
+    --from-literal=secret-access-key="${SECRET_KEY}"
+  log "Created: gitea/garage-backups-credentials"
+else
+  log "Exists: gitea/garage-backups-credentials"
+fi
+
+step_header 8 "Deploying Gitea"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea"
 
 log "Adding Gitea Helm repository..."
@@ -183,7 +259,7 @@ helm_upgrade_install gitea gitea/gitea gitea \
   --timeout 15m \
   --wait
 
-step_header 8 "Waiting for Gitea to be ready"
+step_header 9 "Waiting for Gitea to be ready"
 log "Waiting for Gitea PostgreSQL HA StatefulSet..."
 PG_SS=$(kubectl get statefulset -n gitea \
   -l app.kubernetes.io/component=postgresql \
@@ -194,7 +270,7 @@ kubectl rollout status statefulset/"${PG_SS}" -n gitea --timeout=300s
 log "Waiting for Gitea deployment..."
 kubectl rollout status deployment/gitea -n gitea --timeout=180s
 
-step_header 9 "Bootstrapping Gitea runner credentials"
+step_header 10 "Bootstrapping Gitea runner credentials"
 ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
 ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
 
@@ -251,98 +327,11 @@ fi
 kill ${PF_PID} 2>/dev/null || true
 trap - EXIT
 
-# Gitea is now running — the operator can create the bot account and generate
-# an API token before this prompt appears.
-step_header 10 "Configuring Atlantis VCS credentials"
-
-if ! kubectl get secret atlantis-vcs -n atlantis >/dev/null 2>&1; then
-  echo ""
-  echo "  Gitea is now running. Create a bot user in Gitea, generate an API token"
-  echo "  for it, then provide the details below."
-  echo ""
-  read -rp "  Gitea bot username:    " ATLANTIS_USER
-  read -rsp "  Gitea API token:       " ATLANTIS_TOKEN
-  echo ""
-  read -rp "  Terraform secret:      " TF_VAR_gitea_token
-  echo ""
-  read -rsp "  Webhook secret:        " ATLANTIS_WEBHOOK_SECRET
-  echo ""
-  kubectl create secret generic atlantis-vcs -n atlantis \
-    --from-literal=username="${ATLANTIS_USER}" \
-    --from-literal=token="${ATLANTIS_TOKEN}" \
-    --from-literal=webhook-secret="${ATLANTIS_WEBHOOK_SECRET}" \
-    --from-literal=tf-token="${TF_VAR_gitea_token}"
-  log "Created: atlantis/atlantis-vcs"
-else
-  log "Exists: atlantis/atlantis-vcs"
-fi
-
-# Needs Gitea running and atlantis-vcs populated — Atlantis connects on startup.
-step_header 11 "Deploying Atlantis"
-apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
-
-# Garage must be running before an access key can be created, hence after the
-# Atlantis kustomization (which also deploys Garage). The Atlantis pod sits in
-# CreateContainerConfigError until this secret exists, then retries automatically.
-step_header 12 "Bootstrapping Garage S3 credentials"
-
-log "Waiting for Garage to be ready..."
-kubectl rollout status statefulset/garage -n atlantis --timeout=300s
-
-# Connect the replicas into one Garage cluster.
-# Idempotent: "node connect" is a no-op for peers that are already known.
-GARAGE_REPLICAS=3
-for i in $(seq 1 $((GARAGE_REPLICAS - 1))); do
-  PEER_ID=$(kubectl exec -n atlantis "garage-${i}" -- /garage -c /etc/garage/garage.toml node id -q)
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml node connect "${PEER_ID}"
-done
-
-# Assign a layout role to every node that lacks one (fresh cluster: all three).
-# 50G per node with replication_factor=3 gives ~50G usable capacity.
-if kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
-    | grep -q "NO ROLE ASSIGNED"; then
-  for NODE_ID in $(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
-      | awk '/NO ROLE ASSIGNED/{print $1}'); do
-    kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-      layout assign -z dc1 -c 50G "${NODE_ID}"
-  done
-  # Next layout version is always current + 1 (fresh cluster: 0 + 1).
-  CUR_LAYOUT=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml layout show 2>/dev/null \
-    | awk '/layout version:/{v=$NF} END{print v+0}')
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-    layout apply --version $((CUR_LAYOUT + 1))
-  log "Applied Garage cluster layout"
-else
-  log "Exists: Garage cluster layout"
-fi
-
-if ! kubectl get secret garage-s3-credentials -n atlantis >/dev/null 2>&1; then
-  KEY_INFO=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-    key create atlantis-tf 2>/dev/null)
-  ACCESS_KEY=$(echo "${KEY_INFO}" | awk '/^Key ID:/{print $3}')
-  SECRET_KEY=$(echo "${KEY_INFO}" | awk '/^Secret key:/{print $3}')
-
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-    bucket create terraform-state 2>/dev/null || true
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
-    bucket allow --read --write --owner terraform-state --key "${ACCESS_KEY}"
-
-  kubectl create secret generic garage-s3-credentials -n atlantis \
-    --from-literal=access-key-id="${ACCESS_KEY}" \
-    --from-literal=secret-access-key="${SECRET_KEY}"
-  log "Created: atlantis/garage-s3-credentials"
-else
-  log "Exists: atlantis/garage-s3-credentials"
-fi
-
-log "Waiting for Atlantis to be ready..."
-kubectl wait pod/atlantis-0 -n atlantis --for=condition=Ready --timeout=120s
-
-step_header 13 "Deploying Gitea runner infrastructure"
+step_header 11 "Deploying Gitea runner infrastructure"
 apply_kustomization "${MANIFESTS_DIR}/apps/gitea-runner"
 
 section_header "Deployment Complete"
 echo ""
-echo "Runners start at 0 replicas and scale up when jobs are queued."
+echo "Runners hold a warm floor of 5 replicas and scale up to 10 when jobs are queued."
 echo "Verify: kubectl get scaledobject -n gitea-runners"
 echo "================================================================================"

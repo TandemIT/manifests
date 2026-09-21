@@ -1,9 +1,10 @@
-# Atlantis + Garage S3 backend. In-app wave ordering: Garage (wave 0) →
-# garage-bootstrap Job (wave 1: cluster layout + S3 credentials for
-# Atlantis, Gitea object storage, and backups) → Atlantis StatefulSet
-# (wave 2). atlantis-vcs is a SealedSecret from scripts/06-seal-secrets.sh;
-# until it is sealed and committed, Atlantis stays in
-# CreateContainerConfigError and Argo CD reports Progressing.
+# Garage — the platform's shared S3-compatible storage (Gitea object
+# storage, platform backups). Formerly also ran Atlantis, which has been
+# removed; this Application (name/path kept as "atlantis" to match the
+# unrenamed namespace — see apps/atlantis/garage/kustomization.yaml) now
+# deploys only the namespace and Garage. In-app wave ordering: Garage
+# StatefulSet (wave 0) → garage-bootstrap Job (wave 1: cluster layout + S3
+# credentials for Gitea object storage and backups).
 #
 # App-level wave is 5 (before gitea-config's namespace/RBAC-dependent "gitea"
 # Application at wave 6): the garage-bootstrap Job writes

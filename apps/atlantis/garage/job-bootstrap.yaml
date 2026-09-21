@@ -1,8 +1,7 @@
 # Connects the Garage replicas into one cluster, applies the layout, and
-# mints S3 credentials for every Garage consumer: Atlantis's Terraform state
-# backend, Gitea's LFS/packages/actions object storage, and the PostgreSQL +
-# Gitea-data backup CronJobs. The GitOps replacement for
-# scripts/04-deploy-apps.sh steps 11–12.
+# mints S3 credentials for Garage's consumers: Gitea's LFS/packages/actions
+# object storage, and the PostgreSQL + Gitea-data backup CronJobs. Generic
+# platform-storage bootstrap — not tied to any one consumer.
 #
 # The gitea-storage and platform-backups secrets are created in the gitea
 # namespace, not atlantis — cross-namespace RBAC for that is in
@@ -10,10 +9,9 @@
 # apps/gitea/rbac-runner-bootstrap.yaml for the runner-token-bootstrap Job).
 #
 # Wave ordering inside this app: Garage StatefulSet (wave 0) → this Job
-# (wave 1) → Atlantis StatefulSet (wave 2), so Atlantis only starts once
-# garage-s3-credentials exists. Idempotent: node connect is a no-op for known
-# peers, layout is skipped when every node has a role, credentials are
-# skipped when the secret exists. To force a re-run:
+# (wave 1). Idempotent: node connect is a no-op for known peers, layout is
+# skipped when every node has a role, credentials are skipped when the
+# secret exists. To force a re-run:
 #   kubectl delete job garage-bootstrap -n atlantis
 # and let Argo CD re-sync.
 apiVersion: batch/v1
@@ -72,25 +70,8 @@ spec:
                 echo "Exists: Garage cluster layout"
               fi
 
-              if ! kubectl get secret garage-s3-credentials -n atlantis >/dev/null 2>&1; then
-                key_info=$(garage garage-0 key create atlantis-tf)
-                access_key=$(echo "${key_info}" | awk '/^Key ID:/{print $3}')
-                secret_key=$(echo "${key_info}" | awk '/^Secret key:/{print $3}')
-                [ -n "${access_key}" ] && [ -n "${secret_key}" ]
-
-                garage garage-0 bucket create terraform-state || true
-                garage garage-0 bucket allow --read --write --owner terraform-state --key "${access_key}"
-
-                kubectl create secret generic garage-s3-credentials -n atlantis \
-                  --from-literal=access-key-id="${access_key}" \
-                  --from-literal=secret-access-key="${secret_key}"
-                echo "Created: atlantis/garage-s3-credentials"
-              else
-                echo "Exists: atlantis/garage-s3-credentials"
-              fi
-
               # Gitea's LFS/packages/actions-artifact object storage (own bucket + key
-              # so its access is scoped separately from the Terraform state backend).
+              # so its access is scoped separately from the backups bucket).
               if ! kubectl get secret garage-gitea-storage-credentials -n gitea >/dev/null 2>&1; then
                 key_info=$(garage garage-0 key create gitea-storage)
                 access_key=$(echo "${key_info}" | awk '/^Key ID:/{print $3}')

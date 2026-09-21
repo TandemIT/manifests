@@ -2,10 +2,11 @@
 # the values file from this repo. Requires the gitea-admin, postgresql-ha
 # credential, and postgresql-ha-pgpool credential secrets — sealed into git
 # by scripts/06-seal-secrets.sh (synced by the gitea-config app, wave 4) —
-# plus garage-gitea-storage-credentials, minted by the atlantis app's
-# garage-bootstrap Job (wave 5). Wave 6 so both are guaranteed to exist
-# first; Gitea's pod spec references them via secretKeyRef and fails to
-# start (CreateContainerConfigError) if either is missing.
+# plus garage-gitea-storage-credentials, minted by the Garage-deploying
+# app's (argocd/apps/atlantis.yaml — Garage, not Atlantis) garage-bootstrap
+# Job (wave 5). Wave 6 so both are guaranteed to exist first; Gitea's pod
+# spec references them via secretKeyRef and fails to start
+# (CreateContainerConfigError) if either is missing.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

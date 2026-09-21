@@ -17,7 +17,6 @@
 #   apps/gitea/sealedsecret-gitea-ldap-<slug>.yaml (optional, one per LDAP provider)
 #   apps/anubis/sealedsecret-anubis-key.yaml
 #   apps/atlantis/garage/sealedsecret-garage-rpc.yaml
-#   apps/atlantis/sealedsecret-atlantis-vcs.yaml   (optional, prompted)
 #
 # Runtime tokens (runner registration, KEDA API, Garage S3, Garage-backed
 # Gitea object storage, backup credentials) are NOT sealed — they are minted
@@ -359,41 +358,6 @@ print('\n'.join(lines))
 " > "${MANIFESTS_DIR}/apps/gitea/values-ldap.yaml"
 LDAP_COUNT="$(LDAP_JSON="${LDAP_JSON}" python3 -c "import json,os; print(len(json.loads(os.environ['LDAP_JSON'])))")"
 log "Generated: apps/gitea/values-ldap.yaml (${LDAP_COUNT} provider(s))"
-
-# Optional — needs a Gitea bot account + API token.
-step_header 8 "Sealing atlantis/atlantis-vcs"
-OUT="${MANIFESTS_DIR}/apps/atlantis/sealedsecret-atlantis-vcs.yaml"
-if [[ -f "${OUT}" ]]; then
-  log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
-else
-  VCS_USER="$(live_value atlantis-vcs atlantis username)"
-  VCS_TOKEN="$(live_value atlantis-vcs atlantis token)"
-  VCS_WEBHOOK="$(live_value atlantis-vcs atlantis webhook-secret)"
-  VCS_TF="$(live_value atlantis-vcs atlantis tf-token)"
-  if [[ -n "${VCS_TOKEN}" ]]; then
-    log "Reusing live Atlantis VCS credentials"
-  else
-    echo ""
-    read -rp "  Configure Atlantis VCS credentials (Gitea bot account)? [y/N]: " VCS_ANSWER
-    if [[ "${VCS_ANSWER,,}" == "y" ]]; then
-      read -rp "  Gitea bot username:    " VCS_USER
-      read -rsp "  Gitea API token:       " VCS_TOKEN
-      echo ""
-      read -rp "  Terraform secret:      " VCS_TF
-      read -rsp "  Webhook secret:        " VCS_WEBHOOK
-      echo ""
-    else
-      VCS_TOKEN=""
-      log "Skipping Atlantis VCS — re-run this script once the bot account exists"
-    fi
-  fi
-  if [[ -n "${VCS_TOKEN}" ]]; then
-    seal_secret atlantis-vcs atlantis "${OUT}" \
-      "username=${VCS_USER}" "token=${VCS_TOKEN}" \
-      "webhook-secret=${VCS_WEBHOOK}" "tf-token=${VCS_TF}"
-    add_resource "${MANIFESTS_DIR}/apps/atlantis/kustomization.yaml" sealedsecret-atlantis-vcs.yaml
-  fi
-fi
 
 section_header "Sealing complete"
 echo ""

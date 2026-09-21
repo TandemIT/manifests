@@ -1,8 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Garage runs in the atlantis namespace alongside Atlantis.
-# The namespace is created by apps/atlantis/namespace.yaml — apply atlantis/ first.
+# Garage — the platform's shared S3-compatible storage — runs in the
+# atlantis namespace (kept as-is; renaming would mean recreating the
+# StatefulSet's PVCs). The namespace is created by
+# apps/atlantis/namespace.yaml — apply atlantis/ first.
 namespace: atlantis
 
 resources:

@@ -1,5 +1,8 @@
 # RBAC for the garage-bootstrap Job: exec into the Garage pods to drive the
-# garage CLI, and create the S3 credentials secret for Atlantis.
+# garage CLI and wait on its StatefulSet rollout. The Secrets it creates
+# (garage-gitea-storage-credentials, garage-backups-credentials) land in the
+# gitea namespace, not this one — that cross-namespace grant is in
+# apps/gitea/rbac-garage-bootstrap.yaml.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -26,14 +29,6 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list", "watch"]
-  # create cannot be restricted by resourceName
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames: ["garage-s3-credentials"]
-    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

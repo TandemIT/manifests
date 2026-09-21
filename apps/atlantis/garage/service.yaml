@@ -1,22 +1,11 @@
-# Terraform S3 backend example (path-style, no TLS required inside cluster):
-#
-# terraform {
-#   backend "s3" {
-#     bucket   = "terraform-state"
-#     key      = "<workspace>/terraform.tfstate"
-#     region   = "garage"
-#     endpoints = {
-#       s3 = "http://garage.atlantis.svc.cluster.local:3900"
-#     }
-#     use_path_style              = true   # required for Garage
-#     skip_credentials_validation = true
-#     skip_metadata_api_check     = true
-#     skip_region_validation      = true
-#   }
-# }
-#
-# Credentials are supplied automatically by the AWS_ACCESS_KEY_ID /
-# AWS_SECRET_ACCESS_KEY env vars set on the Atlantis StatefulSet.
+# No Terraform/OpenTofu workflow currently uses Garage as a state backend
+# (Atlantis, the previous consumer, has been removed; this repo's own
+# cluster-provisioning terraform/ uses local state). If a future Gitea
+# Actions workflow needs one, it would use path-style S3 config against
+# this Service (http://garage.atlantis.svc.cluster.local:3900), backed by a
+# bucket + key minted the same way as apps/atlantis/garage/job-bootstrap.yaml
+# already does for gitea-storage/platform-backups — not set up here since
+# no such workflow exists yet.
 apiVersion: v1
 kind: Service
 metadata:

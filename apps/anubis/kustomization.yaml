@@ -10,5 +10,3 @@ resources:
   - certificate.yaml
   - ingressroute.yaml
   - networkpolicy.yaml
-  - anubis-atlantis.yaml
-  - atlantis.yaml

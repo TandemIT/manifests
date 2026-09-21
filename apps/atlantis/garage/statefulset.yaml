@@ -119,6 +119,6 @@ spec:
         accessModes: [ReadWriteOnce]
         resources:
           requests:
-            # Sized for Gitea LFS/packages/CI artifacts + Terraform state.
+            # Sized for Gitea LFS/packages/CI artifacts + platform backups.
             # k3s local-path PVCs cannot be expanded in place — size generously.
             storage: 50Gi

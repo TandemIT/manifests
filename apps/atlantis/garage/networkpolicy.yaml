@@ -14,14 +14,6 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # S3 API access from Atlantis (Terraform remote state backend)
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: atlantis
-      ports:
-        - protocol: TCP
-          port: 3900
     # S3 API access from the gitea namespace: Gitea itself (LFS/packages/
     # actions storage) and the two backup CronJobs (platform-backups bucket).
     - from:
