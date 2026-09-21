@@ -16,12 +16,11 @@
 #   apps/gitea/sealedsecret-gitea-oidc-<slug>.yaml (optional, one per OIDC provider)
 #   apps/gitea/sealedsecret-gitea-ldap-<slug>.yaml (optional, one per LDAP provider)
 #   apps/anubis/sealedsecret-anubis-key.yaml
-#   apps/atlantis/garage/sealedsecret-garage-rpc.yaml
+#   apps/garage/sealedsecret-garage-rpc.yaml
 #
 # Runtime tokens (runner registration, KEDA API, Garage S3, Garage-backed
 # Gitea object storage, backup credentials) are NOT sealed — they are minted
-# in-cluster by the bootstrap Jobs in apps/gitea-runner/ and
-# apps/atlantis/garage/.
+# in-cluster by the bootstrap Jobs in apps/gitea-runner/ and apps/garage/.
 #
 # Requirements: kubectl (with cluster access), kubeseal, openssl.
 # The sealed-secrets controller (argocd/apps/sealed-secrets.yaml) must be
@@ -177,15 +176,15 @@ echo "  rotated the live secret to match. Rotating on a running cluster"
 echo "  needs a coordinated change — see README's PostgreSQL credentials section."
 echo ""
 
-step_header 4 "Sealing atlantis/garage-rpc"
-OUT="${MANIFESTS_DIR}/apps/atlantis/garage/sealedsecret-garage-rpc.yaml"
+step_header 4 "Sealing garage/garage-rpc"
+OUT="${MANIFESTS_DIR}/apps/garage/sealedsecret-garage-rpc.yaml"
 if [[ -f "${OUT}" ]]; then
   log "Exists: ${OUT#"${MANIFESTS_DIR}"/}"
 else
-  RPC="$(live_value garage-rpc atlantis rpc-secret)"
+  RPC="$(live_value garage-rpc garage rpc-secret)"
   [[ -n "${RPC}" ]] || RPC="$(openssl rand -hex 32)"
-  seal_secret garage-rpc atlantis "${OUT}" "rpc-secret=${RPC}"
-  add_resource "${MANIFESTS_DIR}/apps/atlantis/garage/kustomization.yaml" sealedsecret-garage-rpc.yaml
+  seal_secret garage-rpc garage "${OUT}" "rpc-secret=${RPC}"
+  add_resource "${MANIFESTS_DIR}/apps/garage/kustomization.yaml" sealedsecret-garage-rpc.yaml
 fi
 
 step_header 5 "Sealing anubis/anubis-key"

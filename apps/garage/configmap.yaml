@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: garage-config-tmpl
-  namespace: atlantis
+  namespace: garage
   labels:
     app.kubernetes.io/name: garage
     app.kubernetes.io/part-of: gitops
@@ -18,7 +18,7 @@ data:
     replication_factor = 3
 
     rpc_bind_addr   = "[::]:3901"
-    rpc_public_addr = "__POD_NAME__.garage-headless.atlantis.svc.cluster.local:3901"
+    rpc_public_addr = "__POD_NAME__.garage-headless.garage.svc.cluster.local:3901"
     rpc_secret      = "__RPC_SECRET__"
 
     [s3_api]

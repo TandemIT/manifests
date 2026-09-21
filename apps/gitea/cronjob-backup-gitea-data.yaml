@@ -78,7 +78,7 @@ spec:
                       name: garage-backups-credentials
                       key: secret-access-key
                 - name: AWS_ENDPOINT_URL_S3
-                  value: "http://garage.atlantis.svc.cluster.local:3900"
+                  value: "http://garage.garage.svc.cluster.local:3900"
                 - name: AWS_REGION
                   value: "garage"
               command:

@@ -25,7 +25,7 @@ MetalLB manages LoadBalancer services (L2 mode):
 | sealed-secrets | v2.17.4          |
 | KEDA      | v2.15.1              |
 | Traefik   | v3.3.4 (chart 34.4.1) |
-| Gitea     | 1.23.8 (chart ~12.5) |
+| Gitea     | 1.27.3 (chart 12.7.0) |
 | cert-manager | v1.15.3 (chart)   |
 
 ---
@@ -224,7 +224,7 @@ kubectl rollout restart deployment/anubis -n anubis
 
 Runtime tokens are **not** in git — they are minted in-cluster by bootstrap
 Jobs (`runner-token-bootstrap` in gitea-runners, `garage-bootstrap` in
-atlantis). To re-mint, delete the secret and the Job, then let Argo CD sync:
+garage). To re-mint, delete the secret and the Job, then let Argo CD sync:
 
 ```bash
 kubectl delete secret gitea-api-token gitea-runner-registration -n gitea-runners
@@ -248,11 +248,12 @@ kubectl get secret -n kube-system \
 kubectl apply -k apps/gitea/
 kubectl apply -k apps/gitea-runner/
 kubectl apply -k apps/anubis/
+kubectl apply -k apps/garage/
 
 # Gitea Helm chart upgrade (edit apps/gitea/values.yaml first)
 helm upgrade gitea gitea/gitea \
   --namespace gitea \
-  --version "~12.5" \
+  --version "12.7.0" \
   --values apps/gitea/values.yaml \
   --timeout 15m --wait
 ```

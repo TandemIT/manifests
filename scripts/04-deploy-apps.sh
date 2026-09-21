@@ -38,7 +38,7 @@ require_binary kubectl helm curl python3 openssl
 require_cluster
 
 step_header 2 "Ensuring required namespaces exist"
-for ns in traefik cert-manager gitea gitea-runners anubis atlantis; do
+for ns in traefik cert-manager gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
 done
 
@@ -55,12 +55,12 @@ else
 fi
 
 # Garage rpc-secret (must exist before Garage starts)
-if ! kubectl get secret garage-rpc -n atlantis >/dev/null 2>&1; then
-  kubectl create secret generic garage-rpc -n atlantis \
+if ! kubectl get secret garage-rpc -n garage >/dev/null 2>&1; then
+  kubectl create secret generic garage-rpc -n garage \
     --from-literal=rpc-secret="$(openssl rand -hex 32)"
-  log "Created: atlantis/garage-rpc"
+  log "Created: garage/garage-rpc"
 else
-  log "Exists: atlantis/garage-rpc"
+  log "Exists: garage/garage-rpc"
 fi
 
 if ! kubectl get secret gitea-runner-registration -n gitea-runners >/dev/null 2>&1; then
@@ -168,32 +168,32 @@ apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
 # credentials via secretKeyRef and fails to start (CreateContainerConfigError)
 # until it exists.
 step_header 7 "Deploying Garage storage"
-apply_kustomization "${MANIFESTS_DIR}/apps/atlantis"
+apply_kustomization "${MANIFESTS_DIR}/apps/garage"
 
 log "Waiting for Garage to be ready..."
-kubectl rollout status statefulset/garage -n atlantis --timeout=300s
+kubectl rollout status statefulset/garage -n garage --timeout=300s
 
 # Connect the replicas into one Garage cluster.
 # Idempotent: "node connect" is a no-op for peers that are already known.
 GARAGE_REPLICAS=3
 for i in $(seq 1 $((GARAGE_REPLICAS - 1))); do
-  PEER_ID=$(kubectl exec -n atlantis "garage-${i}" -- /garage -c /etc/garage/garage.toml node id -q)
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml node connect "${PEER_ID}"
+  PEER_ID=$(kubectl exec -n garage "garage-${i}" -- /garage -c /etc/garage/garage.toml node id -q)
+  kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml node connect "${PEER_ID}"
 done
 
 # Assign a layout role to every node that lacks one (fresh cluster: all three).
 # 50G per node with replication_factor=3 gives ~50G usable capacity.
-if kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+if kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
     | grep -q "NO ROLE ASSIGNED"; then
-  for NODE_ID in $(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
+  for NODE_ID in $(kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml status 2>/dev/null \
       | awk '/NO ROLE ASSIGNED/{print $1}'); do
-    kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+    kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
       layout assign -z dc1 -c 50G "${NODE_ID}"
   done
   # Next layout version is always current + 1 (fresh cluster: 0 + 1).
-  CUR_LAYOUT=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml layout show 2>/dev/null \
+  CUR_LAYOUT=$(kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml layout show 2>/dev/null \
     | awk '/layout version:/{v=$NF} END{print v+0}')
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     layout apply --version $((CUR_LAYOUT + 1))
   log "Applied Garage cluster layout"
 else
@@ -203,14 +203,14 @@ fi
 # Gitea's LFS/packages/actions-artifact object storage (own bucket + key so
 # its access is scoped separately from the backups bucket).
 if ! kubectl get secret garage-gitea-storage-credentials -n gitea >/dev/null 2>&1; then
-  KEY_INFO=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  KEY_INFO=$(kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     key create gitea-storage 2>/dev/null)
   ACCESS_KEY=$(echo "${KEY_INFO}" | awk '/^Key ID:/{print $3}')
   SECRET_KEY=$(echo "${KEY_INFO}" | awk '/^Secret key:/{print $3}')
 
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     bucket create gitea-storage 2>/dev/null || true
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     bucket allow --read --write --owner gitea-storage --key "${ACCESS_KEY}"
 
   kubectl create secret generic garage-gitea-storage-credentials -n gitea \
@@ -223,14 +223,14 @@ fi
 
 # PostgreSQL + Gitea-data backup CronJobs (apps/gitea/cronjob-backup-*.yaml).
 if ! kubectl get secret garage-backups-credentials -n gitea >/dev/null 2>&1; then
-  KEY_INFO=$(kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  KEY_INFO=$(kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     key create platform-backups 2>/dev/null)
   ACCESS_KEY=$(echo "${KEY_INFO}" | awk '/^Key ID:/{print $3}')
   SECRET_KEY=$(echo "${KEY_INFO}" | awk '/^Secret key:/{print $3}')
 
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     bucket create platform-backups 2>/dev/null || true
-  kubectl exec -n atlantis garage-0 -- /garage -c /etc/garage/garage.toml \
+  kubectl exec -n garage garage-0 -- /garage -c /etc/garage/garage.toml \
     bucket allow --read --write --owner platform-backups --key "${ACCESS_KEY}"
 
   kubectl create secret generic garage-backups-credentials -n gitea \

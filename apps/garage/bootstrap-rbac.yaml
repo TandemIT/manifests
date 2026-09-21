@@ -44,4 +44,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: garage-bootstrap
-    namespace: atlantis
+    namespace: garage

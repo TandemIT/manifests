@@ -82,7 +82,7 @@ log "MetalLB + CoreDNS override applied from platform/"
 # because they can only be minted against a running Gitea (04-deploy-apps.sh
 # step 9).
 step_header 6 "Generating bootstrap secrets"
-for ns in gitea gitea-runners anubis atlantis; do
+for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
 done
 
@@ -96,12 +96,12 @@ else
   log "Exists: gitea/gitea-admin"
 fi
 
-if ! kubectl get secret garage-rpc -n atlantis >/dev/null 2>&1; then
-  kubectl create secret generic garage-rpc -n atlantis \
+if ! kubectl get secret garage-rpc -n garage >/dev/null 2>&1; then
+  kubectl create secret generic garage-rpc -n garage \
     --from-literal=rpc-secret="$(openssl rand -hex 32)"
-  log "Created: atlantis/garage-rpc"
+  log "Created: garage/garage-rpc"
 else
-  log "Exists: atlantis/garage-rpc"
+  log "Exists: garage/garage-rpc"
 fi
 
 if ! kubectl get secret anubis-key -n anubis >/dev/null 2>&1; then

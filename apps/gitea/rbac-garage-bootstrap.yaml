@@ -1,4 +1,4 @@
-# Lets the garage-bootstrap Job (atlantis namespace) create the two Secrets
+# Lets the garage-bootstrap Job (garage namespace) create the two Secrets
 # it mints for this namespace: garage-gitea-storage-credentials (LFS/
 # packages/actions object storage) and garage-backups-credentials (backup
 # CronJobs). Lives here because the Role must be created in the gitea
@@ -34,4 +34,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: garage-bootstrap
-    namespace: atlantis
+    namespace: garage

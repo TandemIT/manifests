@@ -1,8 +1,6 @@
-# Garage — the platform's shared S3-compatible storage (Gitea object
-# storage, platform backups). Formerly also ran Atlantis, which has been
-# removed; this Application (name/path kept as "atlantis" to match the
-# unrenamed namespace — see apps/atlantis/garage/kustomization.yaml) now
-# deploys only the namespace and Garage. In-app wave ordering: Garage
+# Garage — the platform's shared S3-compatible object storage (Gitea's LFS/
+# packages/actions storage, plus platform backups). A first-class Application
+# in its own right, independent of Gitea. In-app wave ordering: Garage
 # StatefulSet (wave 0) → garage-bootstrap Job (wave 1: cluster layout + S3
 # credentials for Gitea object storage and backups).
 #
@@ -14,7 +12,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: atlantis
+  name: garage
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "5"
@@ -25,10 +23,10 @@ spec:
   source:
     repoURL: https://github.com/TandemIT/manifests.git
     targetRevision: master
-    path: apps/atlantis
+    path: apps/garage
   destination:
     server: https://kubernetes.default.svc
-    namespace: atlantis
+    namespace: garage
   syncPolicy:
     automated:
       prune: true

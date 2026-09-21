@@ -4,7 +4,7 @@
 # platform-storage bootstrap — not tied to any one consumer.
 #
 # The gitea-storage and platform-backups secrets are created in the gitea
-# namespace, not atlantis — cross-namespace RBAC for that is in
+# namespace, not garage — cross-namespace RBAC for that is in
 # apps/gitea/rbac-garage-bootstrap.yaml (same pattern as
 # apps/gitea/rbac-runner-bootstrap.yaml for the runner-token-bootstrap Job).
 #
@@ -12,7 +12,7 @@
 # (wave 1). Idempotent: node connect is a no-op for known peers, layout is
 # skipped when every node has a role, credentials are skipped when the
 # secret exists. To force a re-run:
-#   kubectl delete job garage-bootstrap -n atlantis
+#   kubectl delete job garage-bootstrap -n garage
 # and let Argo CD re-sync.
 apiVersion: batch/v1
 kind: Job
@@ -45,10 +45,10 @@ spec:
             - |
               garage() {
                 local pod="$1"; shift
-                kubectl exec -n atlantis "${pod}" -- /garage -c /etc/garage/garage.toml "$@"
+                kubectl exec -n garage "${pod}" -- /garage -c /etc/garage/garage.toml "$@"
               }
 
-              kubectl rollout status statefulset/garage -n atlantis --timeout=600s
+              kubectl rollout status statefulset/garage -n garage --timeout=600s
 
               # Connect the replicas into one Garage cluster.
               REPLICAS=3

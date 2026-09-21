@@ -18,7 +18,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: atlantis
+              kubernetes.io/metadata.name: garage
           podSelector:
             matchLabels:
               app.kubernetes.io/name: garage
@@ -52,7 +52,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: atlantis
+              kubernetes.io/metadata.name: garage
           podSelector:
             matchLabels:
               app.kubernetes.io/name: garage
@@ -92,7 +92,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: atlantis
+              kubernetes.io/metadata.name: garage
           podSelector:
             matchLabels:
               app.kubernetes.io/name: garage

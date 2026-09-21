@@ -51,7 +51,7 @@ persistence:
   accessModes:
     - ReadWriteOnce
 
-# Ingress is disabled — routing is handled by apps/gitea/ingressroute.yaml,
+# Ingress is disabled — routing is handled by apps/anubis/ingressroute.yaml,
 # which sends traffic to Anubis first (reverse proxy mode) before reaching Gitea.
 ingress:
   enabled: false
@@ -171,7 +171,7 @@ gitea:
     # gitea.additionalConfigFromEnvs below, never as plaintext here.
     storage:
       STORAGE_TYPE: minio
-      MINIO_ENDPOINT: garage.atlantis.svc.cluster.local:3900
+      MINIO_ENDPOINT: garage.garage.svc.cluster.local:3900
       MINIO_BUCKET: gitea-storage
       MINIO_LOCATION: garage
       MINIO_USE_SSL: "false"

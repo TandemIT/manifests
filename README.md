@@ -161,9 +161,9 @@ Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded 
 | PostgreSQL HA              | chart   | `gitea`          | HA database for Gitea — PDB and existingSecret from chart       |
 | Valkey Cluster             | chart   | `gitea`          | Distributed cache and session store — PDB from chart default    |
 | Act Runner                 | 0.4.1   | `gitea-runners`  | GitHub Actions-compatible CI/CD executor, ResourceQuota-capped  |
-| Garage                     | —       | `atlantis`       | Self-hosted S3-compatible object storage for Gitea + backups    |
+| Garage                     | v1.0.0  | `garage`         | Self-hosted S3-compatible object storage for Gitea + backups    |
 
-Garage's namespace is still named `atlantis` — it originally ran alongside Atlantis (Terraform PR automation), which has been removed; the namespace was kept rather than migrating Garage's PVCs for a rename. See [Storage: local-path, its limits, and what moved to Garage](#storage-local-path-its-limits-and-what-moved-to-garage).
+Garage (`apps/garage/`, `argocd/apps/garage.yaml`) is a first-class platform service in its own right, not a Gitea subcomponent — it serves Gitea's object storage today and is free to gain other consumers later. See [Gitea Object Storage on Garage](#gitea-object-storage-on-garage).
 
 ---
 
@@ -257,15 +257,15 @@ This is accepted as-is rather than "fixed" with an unproven CSI addition: Postgr
 
 ### Gitea Object Storage on Garage
 
-Gitea's `[storage]` app.ini section (`apps/gitea/values.yaml` → `gitea.config.storage`) points LFS, Packages, Actions artifacts/logs, attachments, avatars and repo-archive at Garage (`apps/atlantis/garage/` — shared platform storage; see the namespace note above) — each of those derives from `[storage]` automatically unless it sets its own `STORAGE_TYPE` (none do). **Git repository data itself is not part of this and stays on the PVC** — Gitea has no S3 backend for raw repository storage.
+Gitea's `[storage]` app.ini section (`apps/gitea/values.yaml` → `gitea.config.storage`) points LFS, Packages, Actions artifacts/logs, attachments, avatars and repo-archive at Garage (`apps/garage/` — shared platform storage) — each of those derives from `[storage]` automatically unless it sets its own `STORAGE_TYPE` (none do). **Git repository data itself is not part of this and stays on the PVC** — Gitea has no S3 backend for raw repository storage.
 
-The Garage bootstrap Job (`apps/atlantis/garage/job-bootstrap.yaml`) mints a `gitea-storage` bucket and key, and writes the resulting credentials as `garage-gitea-storage-credentials` in the `gitea` namespace (cross-namespace RBAC in `apps/gitea/rbac-garage-bootstrap.yaml`, same pattern as `apps/gitea/rbac-runner-bootstrap.yaml`). Gitea consumes them via `gitea.additionalConfigFromEnvs` (`GITEA__STORAGE__MINIO_*` env vars from a `secretKeyRef`), never as plaintext in `gitea.config`.
+The Garage bootstrap Job (`apps/garage/job-bootstrap.yaml`) mints a `gitea-storage` bucket and key, and writes the resulting credentials as `garage-gitea-storage-credentials` in the `gitea` namespace (cross-namespace RBAC in `apps/gitea/rbac-garage-bootstrap.yaml`, same pattern as `apps/gitea/rbac-runner-bootstrap.yaml`). Gitea consumes them via `gitea.additionalConfigFromEnvs` (`GITEA__STORAGE__MINIO_*` env vars from a `secretKeyRef`), never as plaintext in `gitea.config`.
 
 **This does not migrate existing data.** Any LFS objects, packages, or artifacts already written to the PVC before this was configured stay there; only new writes go to Garage. A one-time migration (copying `data/lfs`, `data/packages`, etc. into the new bucket and confirming Gitea reads them back) is a separate, deliberate operation — not performed automatically by this config change.
 
 ### Terraform/OpenTofu State
 
-Gitea 1.27.3 has a native Terraform State Registry (`backend "http"`, confirmed against the pinned version's actual source — not assumed from current docs): state upload/fetch, versioning by serial number, and locking (`POST`/`DELETE` on a `/lock` sub-route) are all built in, gated by the same `gitea.config.packages.ENABLED` flag already set above — no extra Gitea config, and no separate Garage bucket, since state data flows through the same `[storage]` → `gitea-storage` bucket as LFS/Packages. This replaces the Garage `terraform-state` bucket Atlantis used to bootstrap (removed along with Atlantis — see below).
+Gitea 1.27.3 has a native Terraform State Registry (`backend "http"`, confirmed against the pinned version's actual source — not assumed from current docs): state upload/fetch, versioning by serial number, and locking (`POST`/`DELETE` on a `/lock` sub-route) are all built in, gated by the same `gitea.config.packages.ENABLED` flag already set above — no extra Gitea config, and no separate Garage bucket, since state data flows through the same `[storage]` → `gitea-storage` bucket as LFS/Packages.
 
 No Terraform/OpenTofu workflow in this repo currently uses it — this repo's own cluster-provisioning `terraform/` uses local state, and no other backend configuration exists anywhere. If a future Gitea Actions workflow needs remote state, it authenticates with a Gitea personal access token (`write:package` scope) stored as a Gitea Actions secret, not a long-lived S3 credential:
 
@@ -298,12 +298,12 @@ This is **replication ≠ backup**: PostgreSQL's streaming replication and Valke
 
 ```bash
 # PostgreSQL: download the latest dump, then restore into a scratch database first
-aws --endpoint-url http://garage.atlantis.svc.cluster.local:3900 s3 cp \
+aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
   s3://platform-backups/postgresql/gitea-<timestamp>.sql.gz - | gunzip | \
   psql -h <pgpool-service> -U postgres -d gitea_restore_test
 
 # Gitea data: download and inspect into a scratch path before ever touching the live PVC
-aws --endpoint-url http://garage.atlantis.svc.cluster.local:3900 s3 cp \
+aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
   s3://platform-backups/gitea-data/gitea-data-<timestamp>.tar.gz - | tar -tzv | head
 ```
 
@@ -464,14 +464,14 @@ Generated once by `scripts/01-bootstrap-first-master.sh` (Argo CD syncs manifest
 | `gitea-admin`                       | `gitea`         | Gitea admin username + password                 |
 | `postgresql-ha-credentials`         | `gitea`         | PostgreSQL superuser, app-DB user, repmgr passwords |
 | `postgresql-ha-pgpool-credentials`  | `gitea`         | pgpool admin + health-check passwords            |
-| `garage-rpc`                        | `atlantis`      | Garage cluster RPC secret                       |
+| `garage-rpc`                        | `garage`        | Garage cluster RPC secret                       |
 | `anubis-key`                        | `anubis`        | Anubis ED25519 signing key                      |
 | `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
 | `gitea-api-token`                   | `gitea-runners` | Gitea API token for KEDA scaler (placeholder)   |
 
 Sealed the same way as `gitea-admin` by `scripts/06-seal-secrets.sh` — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 
-Minted automatically once Garage and Gitea are up (`scripts/04-deploy-apps.sh` steps 7 and 10, or `apps/atlantis/garage/job-bootstrap.yaml` / `apps/gitea-runner/base/job-bootstrap-tokens.yaml` in the GitOps path — these replace the placeholders above and add):
+Minted automatically once Garage and Gitea are up (`scripts/04-deploy-apps.sh` steps 7 and 10, or `apps/garage/job-bootstrap.yaml` / `apps/gitea-runner/base/job-bootstrap-tokens.yaml` in the GitOps path — these replace the placeholders above and add):
 
 | Secret                             | Namespace  | Contents                                              |
 | ------------------------------------ | ---------- | ------------------------------------------------------ |
@@ -521,7 +521,7 @@ The GitOps control layer — the only directory Argo CD needs to be pointed at o
 
 - **install/**: Kustomization pinning the upstream Argo CD release manifest (plus the `argocd-cm` patch that restores the Application health check required for app-of-apps wave ordering). Applied once by `scripts/01-bootstrap-first-master.sh`; afterwards Argo CD manages its own installation from here.
 - **root-app.yaml**: The root Application (app-of-apps). Points at `argocd/apps/` — the single manifest the bootstrap script applies imperatively.
-- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `system-upgrade-controller`, `sealed-secrets` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `atlantis` (5, Garage only — its bootstrap Job mints the S3 credentials Gitea's pod spec references; name/path kept from when Atlantis also ran here, see the Garage table note above) → `gitea` (6, Helm chart with values from this repo) → `gitea-runner` (7). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
+- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `system-upgrade-controller`, `sealed-secrets` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `garage` (5 — its bootstrap Job mints the S3 credentials Gitea's pod spec references) → `gitea` (6, Helm chart with values from this repo) → `gitea-runner` (7). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
 
 ### platform/
 
@@ -542,6 +542,7 @@ Contains application-specific Kubernetes manifests and Kustomize overlays:
 - **cert-manager/**: PKI automation for TLS certificates. Includes `base/` for upstream release and `issuers/` for Let's Encrypt ClusterIssuers.
 - **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment (including the Garage-backed object storage and postgresql-ha credential wiring). - `cronjob-backup-*.yaml`: PostgreSQL and Gitea-data backups to Garage. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, Valkey, and Garage.
 - **gitea-runner/**: CI/CD runner deployment. The `base/` subdirectory includes the runner Deployment, KEDA ScaledObject for autoscaling, ResourceQuota for burst protection, and NetworkPolicy for isolation.
+- **garage/**: Self-hosted S3-compatible object storage — Gitea's LFS/packages/actions storage and the platform backup CronJobs' upload target. Independent application, own `garage` namespace.
 - **anubis/**: Example application with its own namespace, certificate, deployment, service, ingress, middleware, and network policies.
 
 - **namespace.yaml**: Defines the Kubernetes namespace for the component.

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: garage
-  namespace: atlantis
+  namespace: garage
   labels:
     app.kubernetes.io/name: garage
     app.kubernetes.io/part-of: gitops
