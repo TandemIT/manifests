@@ -25,8 +25,18 @@ spec:
             name: anubis-policy
       containers:
         - name: anubis
-          image: ghcr.io/techarohq/anubis:latest
-          imagePullPolicy: Always
+          # Pinned (was :latest — every other component in this repo is
+          # exact-pinned). Anubis's own build workflow only ever moves
+          # :latest on a non-pre-release tag push, never on main-branch
+          # commits or a "-pre" tag, so :latest was never at risk of
+          # resolving to a pre-release; the real risk was drift over time.
+          # https://github.com/TecharoHQ/anubis/blob/main/.github/workflows/docker.yml
+          # https://github.com/TecharoHQ/anubis/releases/tag/v1.27.0
+          image: ghcr.io/techarohq/anubis:v1.27.0
+          # Safe now that the tag is an exact, immutable version rather than
+          # a moving one; matches this repo's pull-policy convention for its
+          # other directly-authored Deployments (e.g. apps/gitea-runner).
+          imagePullPolicy: IfNotPresent
           env:
             - name: BIND
               value: ":8080"

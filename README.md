@@ -158,10 +158,17 @@ Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded 
 | Traefik                    | v3.3.4  | `traefik`        | Ingress controller + TCP proxy — 2 replicas, PDB enabled        |
 | cert-manager               | v1.15.3 | `cert-manager`   | Automated TLS certificates via Let's Encrypt                    |
 | Gitea                      | 1.27.3  | `gitea`          | Self-hosted Git service with Actions support                    |
-| PostgreSQL HA              | chart   | `gitea`          | HA database for Gitea — PDB and existingSecret from chart       |
+| PostgreSQL HA              | chart 16.3.2 ⚠ | `gitea`   | HA database for Gitea — PDB and existingSecret from chart       |
 | Valkey Cluster             | chart   | `gitea`          | Distributed cache and session store — PDB from chart default    |
-| Act Runner                 | 0.4.1   | `gitea-runners`  | GitHub Actions-compatible CI/CD executor, ResourceQuota-capped  |
+| Act Runner                 | 3.5.0   | `gitea-runners`  | Gitea Actions CI/CD executor (gitea/runner, formerly act_runner), ResourceQuota-capped |
 | Garage                     | v1.0.0  | `garage`         | Self-hosted S3-compatible object storage for Gitea + backups    |
+| Anubis                     | v1.27.0 | `anubis`         | Bot-challenge reverse proxy in front of Gitea (`apps/anubis/`)  |
+
+**Anubis** was pinned this audit from a floating `ghcr.io/techarohq/anubis:latest` tag to the exact `v1.27.0` release, and `imagePullPolicy` changed from `Always` to `IfNotPresent` to match — checked against Anubis's own build workflow first (`:latest` only ever moves on a non-pre-release tag push, never a main-branch commit or a `-pre` tag, so it could never have resolved to a pre-release build; the real risk pinning addresses is drift across stable releases over time, not accidental pre-release adoption). Anubis runs a single replica with `store.backend: memory` (`apps/anubis/policy-configmap.yaml`) — confirmed correct against Anubis's own store interface, which documents in-memory as explicitly non-persistent and reserved for single-process use; `valkey`/`s3api` backends exist and are real if Anubis is ever scaled beyond one replica, but there's no such requirement today, so nothing was added.
+
+**Act Runner** was upgraded this audit from `gitea/act_runner:0.4.1` (deprecated Docker Hub path) to `gitea/runner:3.5.0` — the project's current name; the runner binary inside the image is also now `gitea-runner`, not `act_runner` (`apps/gitea-runner/deployment.yaml`).
+
+⚠ **PostgreSQL HA and Valkey Cluster — urgent, unresolved, systemic to both.** The `postgresql-ha` (`16.3.2`) and `valkey-cluster` (`3.0.24`) chart versions this repo pins (via `apps/gitea/values.yaml` → the Gitea chart's own `Chart.yaml` dependency pins) default to `docker.io/bitnami/postgresql-repmgr:17.6.0-debian-12-r2` and `docker.io/bitnami/valkey-cluster:8.1.3-debian-12-r3` respectively for their actual StatefulSets. As of this audit, Docker Hub's own listing for **both** images states: *"This image is no longer available for free through Docker Hub... available as a built OCI artifact... through a commercial subscription of Bitnami Secure Images."* This is not the backup job (fixed above) — these are the live database and cache server images, and a pod reschedule that needs to re-pull either (new node, image eviction, etc.) may fail outright without a paid subscription's registry credentials. This needs a deliberate decision, not a silent fix: pay for Bitnami Secure Images, mirror/cache the images before they become unpullable, or migrate off Bitnami charts entirely for one or both (e.g. CloudNativePG or Zalando's postgres-operator for Postgres; a non-Bitnami Valkey/Redis chart for cache). Left unchanged pending that decision — this affects the actual data-plane, not something to fix silently mid-audit.
 
 Garage (`apps/garage/`, `argocd/apps/garage.yaml`) is a first-class platform service in its own right, not a Gitea subcomponent — it serves Gitea's object storage today and is free to gain other consumers later. See [Gitea Object Storage on Garage](#gitea-object-storage-on-garage).
 
@@ -323,7 +330,7 @@ Use a private-visibility owner (user or org) for `{owner}` — Gitea's package p
 
 `apps/gitea/cronjob-backup-postgresql.yaml` and `apps/gitea/cronjob-backup-gitea-data.yaml` run daily, dumping/tarring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
 
-- **PostgreSQL**: `pg_dump` against pgpool, gzipped, uploaded as `postgresql/gitea-<timestamp>.sql.gz`. 14-day retention, pruned by the same CronJob.
+- **PostgreSQL**: `pg_dump` against pgpool, gzipped, uploaded as `postgresql/gitea-<timestamp>.sql.gz`. 14-day retention, pruned by the same CronJob. Its `pg_dump` client image was switched this audit from `bitnamilegacy/postgresql:17` (Docker Hub's frozen "no longer updated" registry) to the actively-maintained Docker Official Image `postgres:17.11` — same major version as the actual server (17.6.0, below), pg_dump is compatible across patch releases of a major version.
 - **Gitea repository data**: tars `data/git`, `data/gitea/conf`, and `data/gitea/gitea.db`-adjacent state from the Gitea PVC (mounted read-only, scheduled onto the same node as the Gitea pod since local-path is node-pinned), gzipped, uploaded as `gitea-data/gitea-data-<timestamp>.tar.gz`. Same 14-day retention.
 
 This is **replication ≠ backup**: PostgreSQL's streaming replication and Valkey's cluster replicas protect against a node dying, not against a bad migration, an accidental deletion, or logical corruption, which replicate to every copy just as faithfully as legitimate writes. Neither CronJob has been exercised as a restore yet — treat that as required before relying on either in an incident. Restore procedure:
@@ -355,13 +362,15 @@ The termination grace period is set to **3660 seconds** (one hour plus one minut
 
 ### KEDA for Runner Autoscaling
 
-The runner `Deployment` holds a **warm floor of 5 replicas**. KEDA watches the Gitea Actions job queue (via the `github-runner` trigger, which is Gitea-compatible) and scales the deployment based on queued job count:
+The runner `Deployment` holds a **warm floor of 5 replicas**. KEDA's `github-runner` trigger is designed and documented against GitHub's own Actions API; its HTTP client builds every request from the configurable `githubApiURL` rather than hardcoding `api.github.com`, which is *why* pointing it at Gitea's Actions-compatible API (`apps/gitea-runner/scaledobject.yaml`) is plausible — but KEDA's own docs never mention Gitea, so treat that compatibility as unverified, not documented. Scaling is intended to work by queued job count:
 
 | Condition         | Replicas                                                     |
 | ----------------- | ------------------------------------------------------------ |
 | No jobs queued    | 5 (floor — also the fallback if the Gitea API is unreachable for 3 consecutive polls) |
 | Jobs queued       | 1 runner per queued job, up to 10                            |
 | Post-job cooldown | Scales back down to the floor after 120 seconds              |
+
+**Known issue, not yet fixed**: the ScaledObject's `runnerScope: global` is not a value KEDA's `github-runner` scaler recognizes (its source only accepts `org`/`ent`/`repo`; an unrecognized scope returns a hard error on every poll). Because the fallback replica count (5) equals the floor (5), a scaler that has been erroring on every poll looks identical to a healthy idle one — this may mean the "up to 10" burst path has never actually engaged. This isn't a one-value fix, either: none of `org`/`ent`/`repo` maps cleanly onto Gitea's instance-wide runner token. KEDA's actual, current answer for Gitea/Forgejo is a **separate trigger type** — `forgejo-runner` (merged, [kedacore/keda#6495](https://github.com/kedacore/keda/pull/6495)) and a dedicated `gitea-runner` type (in progress, [kedacore/keda#8087](https://github.com/kedacore/keda/pull/8087)) — not an extension of `github-runner`'s `runnerScope` enum. See the comment in `apps/gitea-runner/scaledobject.yaml` for how to confirm this is actually failing on the live cluster and what to switch to.
 
 A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/resourcequota.yaml`) caps the worst case so a burst toward 10 replicas cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
 
@@ -373,26 +382,27 @@ All namespaces with application workloads have explicit `NetworkPolicy` resource
 
 ### Gitea allowed traffic
 
-| Direction | Peer                       | Ports    | Purpose                                 |
-| --------- | -------------------------- | -------- | --------------------------------------- |
-| Ingress   | `traefik` namespace        | 3000, 22 | HTTP and SSH from ingress controller    |
-| Ingress   | `gitea-runners` namespace  | 3000     | Runner API calls                        |
-| Ingress   | `keda` namespace           | 3000     | KEDA job-queue polling                  |
-| Egress    | `gitea` namespace (pgpool) | 5432     | Database connections                    |
-| Egress    | `gitea` namespace (valkey) | 6379     | Cache and session store                 |
-| Egress    | External                   | 443, 25  | HTTPS outbound + SMTP for notifications |
+| Direction | Peer                              | Ports    | Purpose                                              |
+| --------- | ---------------------------------- | -------- | ---------------------------------------------------- |
+| Ingress   | `traefik` namespace                | 3000, 2222 | HTTP and SSH from ingress controller                |
+| Ingress   | `gitea-runners` namespace          | 3000     | Runner API calls                                      |
+| Ingress   | `keda` namespace                   | 3000     | KEDA job-queue polling                                |
+| Ingress   | `anubis` namespace (anubis pod)    | 3000     | Open Graph metadata fetch (`OG_PASSTHROUGH`)          |
+| Egress    | `gitea` namespace (pgpool)         | 5432     | Database connections                                  |
+| Egress    | `gitea` namespace (valkey)         | 6379     | Cache and session store                               |
+| Egress    | External                           | 443, 587 | HTTPS outbound + SMTP submission (STARTTLS) for notifications |
 
 ### Pod security highlights
 
-| Component    | UID   | Read-only rootfs      | Seccomp        | Capabilities                             |
-| ------------ | ----- | --------------------- | -------------- | ---------------------------------------- |
-| Traefik      | 65532 | Yes                   | RuntimeDefault | drop ALL                                 |
-| cert-manager | 1000  | Yes                   | RuntimeDefault | drop ALL                                 |
-| Gitea        | 1000  | No (writable app dir) | RuntimeDefault | drop ALL                                 |
-| Act Runner   | 1000  | No                    | RuntimeDefault | drop ALL                                 |
-| dind sidecar | root  | No                    | Unconfined     | SYS_ADMIN (required for mount/overlayfs) |
+| Component            | UID   | Read-only rootfs | Seccomp        | Capabilities                                            |
+| --------------------- | ----- | ----------------- | -------------- | -------------------------------------------------------- |
+| Traefik                | 65532 | Yes                | RuntimeDefault | drop ALL                                                  |
+| cert-manager           | 1000  | Yes                | RuntimeDefault | drop ALL                                                  |
+| Gitea                  | 1000  | No (writable app dir) | RuntimeDefault | drop ALL                                              |
+| Act Runner (`runner`)  | 1000  | Yes                | RuntimeDefault | drop ALL                                                  |
+| dind sidecar           | root  | No                 | Unconfined     | `privileged: true` (full capability set — not scoped to just `SYS_ADMIN`) |
 
-The dind sidecar is the only privileged workload and is unavoidable for Docker-in-Docker CI execution. It is isolated to the `gitea-runners` namespace and cannot reach the Gitea or platform namespaces except through the allowed network policy rules.
+The dind sidecar is the only privileged workload and is unavoidable for Docker-in-Docker CI execution. It is isolated to the `gitea-runners` namespace and cannot reach the Gitea or platform namespaces except through the allowed network policy rules (`apps/gitea-runner/networkpolicy.yaml` restricts its egress to the `gitea` namespace on 3000, DNS, and HTTPS/HTTP on 443/80).
 
 ---
 
@@ -414,11 +424,11 @@ The dind sidecar is the only privileged workload and is unavoidable for Docker-i
           │
   Each new pod:
     init → register with Gitea API (gets runner token)
-    main → act_runner daemon picks up jobs
+    main → gitea-runner daemon picks up jobs
     dind → Docker daemon on 127.0.0.1:2375
           │
   On scale-down (SIGTERM):
-    act_runner drains current job (up to 3660s grace period)
+    gitea-runner drains current job (up to 3660s grace period)
     init → deregister from Gitea API
 ```
 
@@ -570,12 +580,12 @@ Contains application-specific Kubernetes manifests and Kustomize overlays:
 - **keda/**: KEDA operator (upstream release manifest + host-alias patch pointing `git.open-ict.hu` at the MetalLB VIP).
 - **kured/**: upstream kured release manifest (DaemonSet, RBAC, sentinel hostPath mount) + a local patch for the reboot window only.
 - **system-upgrade-controller/**: upstream CRDs + controller for automated K3s upgrades, plus the local server/agent `Plan` resources.
-- **traefik/**: Ingress controller configuration. The `base/` subdirectory includes deployment, service, RBAC, and IngressClass resources.
-- **cert-manager/**: PKI automation for TLS certificates. Includes `base/` for upstream release and `issuers/` for Let's Encrypt ClusterIssuers.
+- **traefik/**: `namespace.yaml` + `values.yaml` only — the Traefik workload itself is the official Helm chart (`argocd/apps/traefik.yaml`). `kustomization.yaml` exists so Argo CD's Kustomize source-type detection applies only `namespace.yaml`, not `values.yaml` (a Helm values file, not a manifest) as a raw resource.
+- **cert-manager/**: Same pattern as `traefik/` — `namespace.yaml` + `values.yaml`, the cert-manager workload is the jetstack Helm chart. `issuers/` holds the Let's Encrypt `ClusterIssuer`s as a separate wave-3 Application (`argocd/apps/cert-manager-issuers.yaml`), synced after cert-manager's CRDs/webhook are ready.
 - **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment (including the Garage-backed object storage and postgresql-ha credential wiring). - `cronjob-backup-*.yaml`: PostgreSQL and Gitea-data backups to Garage. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, Valkey, and Garage.
 - **gitea-runner/**: CI/CD runner deployment — runner Deployment, KEDA ScaledObject for autoscaling, ResourceQuota for burst protection, and NetworkPolicy for isolation.
 - **garage/**: Self-hosted S3-compatible object storage — Gitea's LFS/packages/actions storage and the platform backup CronJobs' upload target. Independent application, own `garage` namespace.
-- **anubis/**: Example application with its own namespace, certificate, deployment, service, ingress, middleware, and network policies.
+- **anubis/**: Bot-challenge reverse proxy sitting in front of Gitea (not an example/placeholder) — namespace, certificate, deployment (pinned image, see [Component Stack](#component-stack)), service, ingress, middleware, and network policies, plus its bot policy (`policy-configmap.yaml`).
 
 - **namespace.yaml**: Defines the Kubernetes namespace for the component.
 - **deployment.yaml**: Describes the Deployment resource for running pods.
@@ -590,40 +600,42 @@ Contains application-specific Kubernetes manifests and Kustomize overlays:
 
 ### Middleware
 
-Middleware resources are defined in `middleware.yaml` files found in various application directories (e.g., `apps/gitea/middleware.yaml`, `apps/anubis/middleware.yaml`). These files configure Traefik middleware components such as:
+Middleware resources are defined in `middleware.yaml` files found in various application directories (e.g., `apps/gitea/middleware.yaml`, `apps/anubis/middleware.yaml`, `argocd/install/middleware.yaml`). These files configure Traefik middleware components such as:
 
 - **Rate limiting**: Protects backend services from excessive requests.
 - **HTTPS redirection**: Ensures all HTTP traffic is redirected to HTTPS.
-- **Header manipulation**: Adds or modifies HTTP headers for security or compliance.
+- **IP allowlisting**: Restricts a route to specific source CIDRs (`argocd/install/ip-allowlist.yaml`).
 
 Each service can have its own middleware configuration, referenced by its IngressRoute or IngressRouteTCP resource. This modular approach allows for fine-grained traffic management and security policies per application.
 
-- **namespace.yaml**: Defines the Kubernetes namespace for the component.
-- **deployment.yaml**: Describes the Deployment resource for running pods.
-- **service.yaml**: Exposes the application internally or externally.
-- **ingressroute.yaml / ingressroute-tcp.yaml**: Traefik-specific routing for HTTP(S) and TCP (SSH) traffic.
-- **middleware.yaml**: Traefik middleware for rate limiting, redirects, etc.
-- **networkpolicy.yaml**: Enforces network segmentation and security.
-- **certificate.yaml**: Requests TLS certificates via cert-manager.
-- **policy-configmap.yaml**: Stores policy configuration for apps.
-- **kustomization.yaml**: Kustomize manifest for composing resources.
-- **values.yaml**: Helm values for templated deployments (Gitea).
-
 ---
+
+### Kustomize
+
+Kustomize is used only where it does real work; a directory that would otherwise contain only a `kustomization.yaml` listing local files is left as plain YAML instead (Argo CD's own source-type detection then treats it as a directory source). Verified by rendering every `kustomization.yaml` with `kubectl kustomize` (kubectl v1.36.1 / Kustomize v5.8.1).
+
+| Path | Why it's Kustomize |
+| --- | --- |
+| `apps/keda/`, `apps/kured/`, `apps/system-upgrade-controller/` | Upstream release manifest (remote URL resource) + a local strategic-merge patch. |
+| `argocd/install/` | Upstream Argo CD release manifest + `argocd-cm`/`argocd-cmd-params-cm` patches. |
+| `platform/metallb/` | Upstream release manifest + local `IPAddressPool`/`L2Advertisement`. |
+| `platform/` (top level) | Composes `metallb/` + `coredns/coredns-custom.yaml` into one `kubectl apply -k` unit for the bootstrap script. |
+| `apps/garage/`, `apps/gitea-runner/` | `namespace:` field injects `metadata.namespace` into resources that don't set it themselves (verified: their ServiceAccount/Role/RoleBinding/Job manifests carry no explicit namespace) — a genuine Kustomize transformation, not just an index. |
+| `apps/cert-manager/`, `apps/traefik/`, `apps/gitea/` (the `gitea-config` app) | The directory also holds a Helm `values.yaml` used via `ref:` from a multi-source Argo Application. `kustomization.yaml`'s `resources:` list is what stops Argo's directory-source detection from also trying to apply `values.yaml` as a raw manifest. |
+| `apps/cert-manager/issuers/` | `commonAnnotations` transformer. |
+
+Plain YAML (no `kustomization.yaml`): `apps/anubis/` — a pure resource list with no transformation, and no Helm values file to disambiguate away from.
 
 ## Tools & Frameworks Used
 
 - **Kubernetes**: Container orchestration and workload management.
-- **Kustomize**: Native Kubernetes configuration management and overlays.
-- **Helm**: Used only for Gitea application deployment.
-- **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic. Traefik's middleware system is used to implement rate limiting, HTTPS redirection, and header manipulation for enhanced security and traffic management.
+- **Helm**: Traefik, cert-manager, Gitea (+ its `postgresql-ha`/`valkey-cluster` subcharts), and Sealed Secrets — each a multi-source or chart-based Argo CD Application, values from this repo.
+- **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic. Its middleware system implements rate limiting, HTTPS redirection, and IP allowlisting (`argocd/install/ip-allowlist.yaml`).
 - **cert-manager**: Automated TLS certificate management with Let's Encrypt.
 - **MetalLB**: L2 load balancer for exposing services with stable IPs.
 - **KEDA**: Event-driven autoscaling for CI/CD runners.
 - **kube-vip**: Floating VIP for control-plane HA.
 - **kured**: Automated node reboots for security updates.
-
-## Architecture
 
 ### Traffic Management with Traefik Middleware
 
@@ -631,19 +643,9 @@ All ingress traffic is routed through Traefik, which leverages its middleware sy
 
 - **Rate limiting** to protect backend services from abuse
 - **Automatic HTTP to HTTPS redirection** for secure access
-- **Custom header injection and manipulation** for compliance and security
+- **IP allowlisting** to restrict a route to specific source CIDRs
 
 This approach ensures consistent, centralized traffic management across all applications and services deployed in the cluster.
-
-- **Kubernetes**: Container orchestration and workload management.
-- **Kustomize**: Native Kubernetes configuration management and overlays.
-- **Helm**: Used only for Gitea application deployment.
-- **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic.
-- **cert-manager**: Automated TLS certificate management with Let's Encrypt.
-- **MetalLB**: L2 load balancer for exposing services with stable IPs.
-- **KEDA**: Event-driven autoscaling for CI/CD runners.
-- **kube-vip**: Floating VIP for control-plane HA.
-- **kured**: Automated node reboots for security updates.
 
 ---
 

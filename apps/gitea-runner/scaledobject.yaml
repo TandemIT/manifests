@@ -17,6 +17,25 @@ spec:
   pollingInterval: 15
   cooldownPeriod: 120
   # Hold at 5 replicas if the Gitea API is unreachable for 3 consecutive polls.
+  # UNVERIFIED, LIKELY BROKEN: runnerScope's value below ("global") is not
+  # accepted by KEDA's github-runner scaler — confirmed against both the
+  # current docs (keda.sh/docs/2.20/scalers/github-runner/) and the actual
+  # source (kedacore/keda pkg/scalers/github_runner_scaler.go), which only
+  # accept org/ent/repo; an unrecognized runnerScope returns a hard error on
+  # every poll. Because minReplicaCount (5) equals fallback.replicas (5), a
+  # scaler erroring on every poll is indistinguishable from a healthy idle
+  # one — this may mean the burst-to-10 path has never actually engaged.
+  # This is NOT a simple "pick the right org/ent/repo value" fix: none of
+  # those three describes Gitea's instance-wide "whole instance" runner
+  # token (apps/gitea-runner/job-bootstrap-tokens.yaml) either, which is
+  # presumably why KEDA didn't extend this scaler's enum for it. Instead
+  # KEDA ships a separate `forgejo-runner` trigger type (merged upstream,
+  # github.com/kedacore/keda PR #6495) built for Forgejo/Gitea's own API
+  # shape, and a dedicated `gitea-runner` trigger is in progress (PR #8087,
+  # open as of this comment). The real fix is switching `type:` below once
+  # one of those is confirmed to work against this Gitea instance, not
+  # editing runnerScope. Check `kubectl logs -n keda deploy/keda-operator`
+  # for a "runnerScope global not supported" error to confirm this is live.
   fallback:
     failureThreshold: 3
     replicas: 5

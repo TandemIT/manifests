@@ -84,6 +84,16 @@ data:
       CHALLENGE: 200
       DENY: 200
 
+    # memory is correct for our single Anubis replica (apps/anubis/deployment.yaml
+    # replicas: 1): Anubis's own store interface docs its IsPersistent()
+    # contract as false for in-memory, true for bbolt/valkey — i.e. memory
+    # is explicitly the volatile, single-process option. valkey and s3api
+    # backends exist and are real (verified against the actual v1.27.0
+    # source, lib/store/{memory,bbolt,valkey,s3api}), so either our own
+    # Valkey cluster (apps/gitea/values.yaml) or Garage could back a shared
+    # store if Anubis is ever scaled beyond one replica — do not add that
+    # infrastructure now, there is no multi-replica requirement.
+    # https://github.com/TecharoHQ/anubis/blob/v1.27.0/lib/store/interface.go
     store:
       backend: memory
       parameters: {}

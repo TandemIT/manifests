@@ -37,8 +37,19 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           initContainers:
+            # Docker Official Image, actively maintained (unlike the former
+            # bitnamilegacy/postgresql:17 — Docker Hub's frozen "no longer
+            # updated" registry). Only the pg_dump client is used here, not
+            # the server. Server is postgresql-ha's pinned
+            # bitnami/postgresql-repmgr:17.6.0 (major version 17, confirmed
+            # from the exact chart version this repo pins — see
+            # apps/gitea/values.yaml postgresql-ha section) — pg_dump is
+            # forward/backward compatible across patch releases of the same
+            # major version, so 17.11's client against a 17.6.0 server is
+            # fine.
+            # https://hub.docker.com/_/postgres
             - name: dump
-              image: bitnamilegacy/postgresql:17
+              image: postgres:17.11
               env:
                 - name: PGHOST
                   value: gitea-postgresql-ha-pgpool.gitea.svc.cluster.local
