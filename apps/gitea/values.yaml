@@ -71,7 +71,16 @@ valkey-cluster:
   cluster:
     nodes: 6 # 3 masters + 3 replicas (1 replica per master shard)
     replicas: 1 # replica per master — required for failover
-  podAntiAffinityPreset: hard # enforce nodes on separate Kubernetes nodes
+  # Verified live (Docker Desktop test cluster, 2026-09-22): a bare top-level
+  # podAntiAffinityPreset here is silently ignored — the chart's real
+  # parameter is nested under valkey:, confirmed against the exact pinned
+  # chart version (valkey-cluster 3.0.24). The old top-level key rendered as
+  # the chart's own soft default (preferredDuringSchedulingIgnoredDuring...),
+  # not hard, so this cluster never actually got the "no two pods share a
+  # node" guarantee the comment/README claimed.
+  # https://github.com/bitnami/charts/blob/valkey-cluster/3.0.24/bitnami/valkey-cluster/values.yaml
+  valkey:
+    podAntiAffinityPreset: hard # enforce nodes on separate Kubernetes nodes
 
 valkey:
   enabled: false
@@ -198,3 +207,19 @@ gitea:
         secretKeyRef:
           name: garage-gitea-storage-credentials
           key: secret-access-key
+    # Verified live (Docker Desktop test cluster, 2026-09-22) that this is
+    # required, not optional: the Gitea chart's own database.yaml template
+    # bakes DATABASE.PASSWD from the *plaintext*
+    # postgresql-ha.global.postgresql.password value — it never reads
+    # global.postgresql.existingSecret for this. Since this repo deliberately
+    # never sets that plaintext field (the whole point of existingSecret,
+    # above, is no plaintext password in git), app.ini rendered PASSWD=""
+    # and Gitea could not authenticate to its own database at all. This
+    # override replaces the empty value via the same env-to-ini mechanism
+    # already used for the Minio credentials above.
+    # https://gitea.com/gitea/helm-chart/src/tag/v12.7.0/templates/_helpers.tpl
+    - name: GITEA__DATABASE__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: postgresql-ha-credentials
+          key: password

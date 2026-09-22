@@ -85,4 +85,13 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
+              # Verified live (Docker Desktop test cluster, 2026-09-22): this
+              # namespace's ResourceQuota (resourcequota.yaml) tracks
+              # limits.cpu, and Kubernetes rejects any pod that doesn't
+              # declare one once a namespace quota tracks that resource —
+              # without this the Job's pod is refused at admission
+              # ("forbidden: failed quota ... must specify limits.cpu") on
+              # every single sync, so the runner registration/KEDA tokens
+              # never actually mint.
+              cpu: 100m
               memory: 128Mi
