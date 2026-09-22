@@ -128,7 +128,21 @@ step_header 7 "Installing Argo CD"
 # --server-side: the applicationsets.argoproj.io CRD's schema exceeds the
 # 262144-byte cap kubectl's client-side apply enforces on the
 # last-applied-configuration annotation.
-apply_kustomization "${MANIFESTS_DIR}/argocd/install" --server-side --force-conflicts
+#
+# Expected to exit non-zero on every fresh cluster: argocd/install/ also
+# contains Argo CD's own self-ingress resources (certificate.yaml,
+# ingressroute.yaml, middleware.yaml, ip-allowlist.yaml), which need the
+# cert-manager.io/Certificate and traefik.io/IngressRoute/Middleware CRDs -
+# and those CRDs don't exist yet at this point (cert-manager/Traefik are
+# themselves Argo CD-managed Applications, synced later at wave 2). Verified
+# live (Docker Desktop test cluster, 2026-09-22): the core Argo CD
+# components install fine regardless, and the "argocd" self-management
+# Application (argocd/apps/argocd.yaml) picks up and successfully creates
+# the remaining 4 resources on its own once cert-manager/Traefik exist - no
+# manual step needed. `|| true` here only survives that one known, expected,
+# self-resolving partial failure; a real installation problem still shows up
+# in the rollout status waits right below.
+apply_kustomization "${MANIFESTS_DIR}/argocd/install" --server-side --force-conflicts || true
 
 log "Waiting for Argo CD to be ready..."
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
