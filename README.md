@@ -196,6 +196,24 @@ Mixing the two responsibilities into one tool would make troubleshooting harder 
 
 ---
 
+### Automatic OS Updates (unattended-upgrades + Kured)
+
+`ansible/system-utils-install.yml` installs and configures `unattended-upgrades` on every node (control-plane and worker alike — nothing here needs them to differ). Security updates and normal package updates — including the kernel — are applied automatically; `ansible/templates/50unattended-upgrades.j2` allowlists the `-security` and `-updates` origins.
+
+Reboots are deliberately **not** unattended-upgrades' job. `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-WithUsers` are explicitly set to `false` (not left at whatever the packaged default happens to be), so a kernel update only leaves the standard `/var/run/reboot-required` sentinel behind. Kured (`apps/kured/`) already watches exactly that file — it bind-mounts the host's `/var/run` at `/sentinel` and points `--reboot-sentinel` at `/sentinel/reboot-required` — and reboots one node at a time inside its own maintenance window (weekdays 02:00–05:00). The flow is:
+
+```
+apt security/normal updates (unattended-upgrades)
+        ↓
+kernel/library update leaves /var/run/reboot-required
+        ↓
+Kured sees the sentinel, cordons + drains, reboots — one node at a time, only inside its window
+```
+
+One scheduler decides *what* to install; one scheduler decides *when* to reboot. Neither can reboot on its own outside that split.
+
+---
+
 ### Traefik for SSH TCP Routing (Port 2222)
 
 Gitea supports Git-over-SSH. Rather than exposing an additional LoadBalancer service (which would consume a second IP from the MetalLB pool), SSH traffic is routed through Traefik via a dedicated **TCP entrypoint on port 2222**.
@@ -209,6 +227,20 @@ This keeps the entire platform reachable through a single IP address.
 ### Traefik Non-Root Binding (Ports 8000/8443 vs 80/443)
 
 Linux restricts binding to ports below 1024 to processes running as root. Traefik runs as UID `65532` (non-root). Rather than granting the `NET_BIND_SERVICE` capability, Traefik listens on high ports (`8000`, `8443`, `2222`) internally. The `LoadBalancer` service maps the standard external ports (`80`, `443`, `2222`) to these high internal ports via `targetPort`. No capabilities needed, no root required.
+
+---
+
+### Traefik `externalTrafficPolicy: Local` (real client source IPs)
+
+MetalLB runs in L2 mode (`platform/metallb/`). With the Kubernetes default `externalTrafficPolicy: Cluster`, a packet that MetalLB's speaker announces on one node can be forwarded by kube-proxy to a Traefik pod on a *different* node — and that hop SNATs the packet, replacing the real client address with a node IP. Traefik's Service (`apps/traefik/values.yaml`) sets `externalTrafficPolicy: Local` instead, which keeps traffic on the node that received it and preserves the true client source IP. This is what makes IP-based access control meaningful anywhere in the cluster — the `ClientIP()` match in `apps/anubis/ingressroute.yaml` and the `rfc1918-allowlist` Middleware in `argocd/install/` both depend on it; without `Local`, both would frequently see a node address instead of the real caller.
+
+---
+
+### Argo CD Ingress + Network Restriction
+
+Argo CD is reachable at `argo.git.open-ict.hu`, using the same Traefik + cert-manager pattern as every other app (`argocd/install/certificate.yaml`, `ingressroute.yaml`, `middleware.yaml`): a `Certificate` issued by `letsencrypt-prod`, terminated at Traefik. `argocd/install/argocd-cmd-params-cm-patch.yaml` sets `server.insecure: "true"` so `argocd-server` serves plain HTTP internally instead of its own self-signed TLS — the standard Argo CD pattern for ingress controllers that terminate TLS themselves rather than passing it through.
+
+Access is additionally restricted by the `rfc1918-allowlist` Middleware (`argocd/install/ip-allowlist.yaml`), which allows all of `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16` and denies everything else. This is intentionally the entire private address space, not a specific VPN subnet — the VPN this will eventually be scoped to is still being built. That file is the single place these CIDRs are declared; when the VPN CIDR is final, replace the three ranges there and nothing else needs to change. Authentication is unchanged: the bootstrap-generated `argocd-initial-admin-secret` password (see [Secrets](#secrets-never-committed)) is still the only credential.
 
 ---
 
@@ -411,7 +443,7 @@ git push       # nodes and Argo CD pull the manifests from git
 
 `deploy.sh` is fully non-interactive and safe to re-run. It auto-detects the IaC binary (OpenTofu preferred, Terraform as fallback; override with `TF_BIN=`). The apply also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
 
-Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS record `git.open-ict.hu` → `145.89.192.138`.
+Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` → `145.89.192.138`.
 
 ### Option B — Manual bootstrap (per-node scripts)
 
@@ -420,7 +452,7 @@ Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-gu
 - 6 Linux nodes reachable over SSH
 - IP range `172.16.10.50–172.16.10.100` available on the LAN (control-plane VIP + node addresses)
 - MetalLB pool address `145.89.192.138` routable to the node uplink (external public IP)
-- DNS record: `git.open-ict.hu` → `145.89.192.138`
+- DNS records: `git.open-ict.hu` and `argo.git.open-ict.hu` → `145.89.192.138`
 - Internet access for pulling images and Let's Encrypt challenges
 
 #### Bootstrap order
@@ -500,7 +532,7 @@ Provisions the VMs on Proxmox (Telmate provider, cloud-init clones of an Ubuntu 
 
 ### ansible/
 
-- **system-utils-install.yml**: qemu-guest-agent + base utilities on all nodes.
+- **system-utils-install.yml**: qemu-guest-agent + base utilities on all nodes, plus `unattended-upgrades` (security and normal package updates, including the kernel, applied automatically — reboots are explicitly left to Kured; see [Automatic OS Updates](#automatic-os-updates-unattended-upgrades--kured)).
 - **k3s-install.yml**: Drives this repo's `scripts/01-bootstrap-first-master.sh` on the first control plane, `02-join-control-plane.sh` on the others (serially, for etcd), and `03-join-worker.sh` on the workers; then fetches a kubeconfig pointed at the VIP. It contains no installation logic of its own.
 - **inventory.yml**: Generated by Terraform — do not edit by hand.
 

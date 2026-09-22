@@ -24,6 +24,43 @@
         name: micro
         state: present
 
+    # Automatic OS updates. Security + normal updates (including kernel
+    # packages) install unattended; Kured, not unattended-upgrades, decides
+    # when a node actually reboots for one — see the templates for the
+    # detailed reasoning.
+    - name: Install unattended-upgrades
+      ansible.builtin.apt:
+        name:
+          - unattended-upgrades
+          # Owns the /var/run/reboot-required sentinel that Kured watches.
+          - update-notifier-common
+        state: present
+
+    - name: Enable the apt-daily/apt-daily-upgrade schedule
+      ansible.builtin.template:
+        src: 20auto-upgrades.j2
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Configure unattended-upgrades (origins + no self-reboot)
+      ansible.builtin.template:
+        src: 50unattended-upgrades.j2
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Ensure apt-daily timers are enabled and running
+      ansible.builtin.systemd:
+        name: '{{ item }}'
+        enabled: true
+        state: started
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+
     - name: Display system utilities status
       ansible.builtin.debug:
-        msg: 'System utilities installed: QEMU guest agent and micro editor'
+        msg: 'System utilities installed: QEMU guest agent, micro editor, and unattended-upgrades'

@@ -67,6 +67,14 @@ ports:
 service:
   spec:
     allocateLoadBalancerNodePorts: false
+    # MetalLB runs in L2 mode (platform/metallb): with the Kubernetes
+    # default "Cluster" traffic policy, kube-proxy may hop traffic to a pod
+    # on a different node and SNATs it in the process, replacing the real
+    # client address with a node IP. "Local" keeps the packet on the node
+    # that received it so Traefik sees the true source IP — required for
+    # ClientIP()-based routing (apps/anubis) and IP-allowlist middlewares
+    # (argocd/install) to see anything other than a node address.
+    externalTrafficPolicy: Local
 
 logs:
   general:

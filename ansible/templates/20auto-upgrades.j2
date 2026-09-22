@@ -1,0 +1,7 @@
+// Managed by Ansible (system-utils-install.yml) — do not edit by hand.
+// Enables the apt-daily.timer / apt-daily-upgrade.timer schedule that
+// unattended-upgrades runs on. Without this file present, the
+// unattended-upgrades package is installed but never actually runs.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

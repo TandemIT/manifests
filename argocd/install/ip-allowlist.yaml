@@ -1,0 +1,22 @@
+# Single source of truth for the Argo CD network restriction. RFC1918 is
+# intentionally the full allowlist for now — the VPN this will eventually be
+# scoped to is still being built and its CIDR is not final. When it is,
+# replace the three ranges below with the real VPN CIDR(s); nothing else
+# needs to change (argocd/install/ingressroute.yaml only references this
+# Middleware by name).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rfc1918-allowlist
+  namespace: argocd
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    app.kubernetes.io/name: argocd
+    app.kubernetes.io/part-of: argocd
+spec:
+  ipAllowList:
+    sourceRange:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16

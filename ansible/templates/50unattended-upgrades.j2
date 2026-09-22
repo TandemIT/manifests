@@ -1,0 +1,23 @@
+// Managed by Ansible (system-utils-install.yml) — do not edit by hand.
+//
+// Security updates and normal package updates (including kernel packages —
+// neither origin below is excluded) are applied automatically. Reboots are
+// NOT: Kured (apps/kured) owns node reboots, watching the standard
+// /var/run/reboot-required sentinel that a kernel/library update leaves
+// behind, and reboots one node at a time inside its own maintenance window
+// (mon-fri 02:00-05:00, see apps/kured/reboot-window-patch.yaml). If
+// unattended-upgrades rebooted on its own the two schedulers would fight,
+// so Automatic-Reboot is explicitly disabled here rather than left at its
+// packaged default.
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}:${distro_codename}-updates";
+};
+
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";

@@ -1,0 +1,11 @@
+# Serve argocd-server over plain HTTP internally so Traefik can terminate
+# TLS at the edge with our own cert-manager certificate (argo-tls) instead
+# of Argo CD's self-signed one. Does not touch authentication — the
+# existing bootstrap-generated admin credential (argocd-initial-admin-secret)
+# is untouched by this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  server.insecure: "true"
