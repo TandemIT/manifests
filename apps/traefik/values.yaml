@@ -1,5 +1,5 @@
 # Values for the official traefik/traefik chart (version pinned in
-# argocd/apps/traefik.yaml and scripts/04-deploy-apps.sh).
+# argocd/apps/traefik.yaml — the single source of truth for the chart version).
 # The entrypoint names web/websecure/ssh must not change — every IngressRoute
 # references them.
 

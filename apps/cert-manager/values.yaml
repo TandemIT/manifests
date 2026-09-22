@@ -1,5 +1,5 @@
 # Values for the jetstack/cert-manager chart (version pinned in
-# argocd/apps/cert-manager.yaml and scripts/04-deploy-apps.sh).
+# argocd/apps/cert-manager.yaml — the single source of truth for the chart version).
 #
 # No hostAliases needed for git.open-ict.hu — CoreDNS answers it cluster-wide
 # (platform/coredns/coredns-custom.yaml).

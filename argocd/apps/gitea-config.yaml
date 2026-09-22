@@ -1,6 +1,6 @@
 # Gitea infrastructure owned by kustomize: namespace, Traefik routes,
 # middleware, and NetworkPolicies. The Gitea workload itself is the Helm
-# chart in the wave-5 "gitea" Application.
+# chart in the wave-6 "gitea" Application.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -1,5 +1,5 @@
 # Mints the runner registration token and the KEDA API token against the
-# live Gitea API — the GitOps replacement for scripts/04-deploy-apps.sh step 9.
+# live Gitea API.
 #
 # Syncs at wave 0 (with the namespace and RBAC); the runner Deployment and
 # ScaledObject are wave 1, so they only start once real tokens exist. The Job

@@ -2,12 +2,14 @@
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
 terraform.tfvars
 *.tfvars
 !terraform.tfvars.example
 crash.log
 *.log
+# .terraform.lock.hcl is deliberately NOT ignored - HashiCorp recommends
+# committing it so provider version/checksum changes go through code review:
+# https://developer.hashicorp.com/terraform/language/files/dependency-lock
 
 # Ansible
 *.retry

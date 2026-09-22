@@ -79,8 +79,10 @@ log "MetalLB + CoreDNS override applied from platform/"
 
 # Argo CD can sync manifests but cannot invent secret material. Generated once
 # here and never overwritten; the runner/API tokens start as placeholders
-# because they can only be minted against a running Gitea (04-deploy-apps.sh
-# step 9).
+# because they can only be minted against a running Gitea — the
+# runner-token-bootstrap Job (apps/gitea-runner/job-bootstrap-tokens.yaml,
+# wave 0 of the gitea-runner Application) does that automatically once Argo
+# CD takes over, no manual step required.
 step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
@@ -158,10 +160,10 @@ echo "  UI:       kubectl port-forward svc/argocd-server -n argocd 8080:443"
 echo "  Login:    admin / ${ARGOCD_PASS}"
 echo "  Watch:    kubectl get applications -n argocd -w"
 echo ""
-echo "AFTER GITEA IS UP (runtime credentials Argo CD cannot mint):"
-echo "  - Runner registration + KEDA API tokens : scripts/04-deploy-apps.sh step 10"
-echo "  (Garage layout + S3 credentials for Gitea object storage/backups mint"
-echo "   automatically via the garage-bootstrap Job.)"
+echo "AFTER GITEA IS UP: no further manual step. Runner registration + KEDA API"
+echo "tokens mint automatically via the runner-token-bootstrap Job, and Garage"
+echo "layout + S3 credentials for Gitea object storage/backups mint"
+echo "automatically via the garage-bootstrap Job."
 echo ""
 echo "Save your token:"
 echo "  NODE_TOKEN='${K3S_TOKEN}'"

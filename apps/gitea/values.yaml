@@ -8,9 +8,9 @@ deployment:
 image:
   registry: ""
   repository: gitea/gitea
-  # Keep in sync with the chart (chart 12.7.0 → Gitea 1.27.x) and with the
-  # --version pin in scripts/04-deploy-apps.sh. Tag overrides the chart's
-  # appVersion to the specific patch release.
+  # Keep in sync with the chart version pinned in argocd/apps/gitea.yaml
+  # (chart 12.7.0 → Gitea 1.27.x). Tag overrides the chart's appVersion to
+  # the specific patch release.
   tag: "1.27.3"
   pullPolicy: IfNotPresent
   rootless: true
@@ -175,6 +175,11 @@ gitea:
       MINIO_BUCKET: gitea-storage
       MINIO_LOCATION: garage
       MINIO_USE_SSL: "false"
+      # Garage is only reachable in-cluster (garage.garage.svc.cluster.local),
+      # so SERVE_DIRECT must stay false: it makes Gitea redirect clients
+      # straight to the storage backend's URL instead of proxying the bytes
+      # itself, which would send external clients an unreachable hostname.
+      # https://docs.gitea.com/administration/config-cheat-sheet#storage-storage
       SERVE_DIRECT: "false"
 
   # Minio credentials as env vars (GITEA__<SECTION>__<KEY> convention),

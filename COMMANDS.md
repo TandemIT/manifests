@@ -35,7 +35,7 @@ MetalLB manages LoadBalancer services (L2 mode):
 - All nodes can reach each other.
 - This repository is cloned to the same path on every node (e.g. `/opt/manifests`).
 - Nodes run a supported Linux distro (Ubuntu 24.04 / Debian 12 recommended).
-- `curl`, `helm`, `python3` available on the deploy host.
+- `curl`, `python3` available on the deploy host (`kubeseal`, `openssl` too if you run `scripts/06-seal-secrets.sh`).
 - Override `VIP` / `K3S_VERSION` via environment variables if needed; the
   kube-vip network interface is auto-detected from the default route
   (override with `VIP_INTERFACE`).
@@ -130,22 +130,24 @@ kubectl get pods -n keda
 
 ---
 
-## Step 5 — Deploy applications
+## Step 5 — Applications deploy themselves
+
+No further manual step. Step 1 already installed Argo CD and applied the root
+app-of-apps (`argocd/root-app.yaml`), which reconciles every Application in
+`argocd/apps/` from git — cert-manager, Traefik, Anubis, Garage, Gitea
+(Helm chart + values from this repo), and the runner stack, in sync-wave
+order. Runtime credentials that Argo CD cannot invent (Garage's S3 keys, the
+runner registration token, the KEDA API token) are minted automatically by
+in-cluster bootstrap Jobs (`apps/garage/job-bootstrap.yaml`,
+`apps/gitea-runner/job-bootstrap-tokens.yaml`) the first time each app syncs.
+
+Watch convergence:
 
 ```bash
-# On master1 (kubectl + helm must be available):
-bash scripts/04-deploy-apps.sh
+kubectl get applications -n argocd -w
 ```
 
-This script (no Flux, no GitOps controller):
-
-1. Creates namespaces and generates secrets
-2. Deploys cert-manager and Traefik via `kubectl apply -k`
-3. Deploys Gitea via `helm upgrade --install` using `apps/gitea/values.yaml` (includes chart-managed PostgreSQL + Valkey)
-4. Bootstraps the runner registration token and KEDA API token via Gitea's REST API
-5. Deploys the runner `Deployment` and KEDA `ScaledObject` via `kubectl apply -k`
-
-Runners start at **0 replicas** and scale up automatically when CI jobs are queued.
+Runners hold a warm floor of 5 replicas and scale up to 10 when CI jobs are queued (see [KEDA runner scaling](#keda-runner-scaling)).
 
 ---
 
@@ -243,26 +245,34 @@ kubectl get secret -n kube-system \
 
 ## Updating application manifests (Day-2)
 
-```bash
-# Infrastructure manifests (networkpolicies, routes, etc.)
-kubectl apply -k apps/gitea/
-kubectl apply -k apps/gitea-runner/
-kubectl apply -f apps/anubis/
-kubectl apply -k apps/garage/
+Every app under `apps/` (Gitea's infrastructure manifests, the runner stack,
+Anubis, Garage, ...) is synced by Argo CD with `selfHeal: true` — a manual
+`kubectl apply` against one of these directories is either redundant (Argo CD
+reapplies the same content on its next sync) or gets reverted by self-heal if
+it diverges from git. Edit the manifest, commit, push:
 
-# Gitea Helm chart upgrade (edit apps/gitea/values.yaml first)
-helm upgrade gitea gitea/gitea \
-  --namespace gitea \
-  --version "12.7.0" \
-  --values apps/gitea/values.yaml \
-  --timeout 15m --wait
+```bash
+git add apps/gitea-runner/ && git commit -m "..." && git push
+kubectl get application gitea-runner -n argocd -w   # watch it sync
+```
+
+To force an immediate sync instead of waiting for Argo CD's poll interval,
+use the `argocd` CLI (https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_app_sync/):
+
+```bash
+argocd app sync <name>
 ```
 
 Gitea, Traefik, and cert-manager are deployed from their official Helm charts
 by Argo CD (multi-source apps: chart from the upstream repo, values from this
 repo). Upgrading any of them = bump `targetRevision` in the matching
-`argocd/apps/*.yaml` (and the pinned version in `scripts/04-deploy-apps.sh`),
-edit the `apps/<name>/values.yaml` if needed, commit, push.
+`argocd/apps/*.yaml`, edit the `apps/<name>/values.yaml` if needed, commit, push.
+
+To preview what a Kustomize directory would render without applying it:
+
+```bash
+kubectl kustomize apps/gitea-runner/
+```
 
 ---
 

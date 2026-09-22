@@ -109,60 +109,6 @@ apply_manifests() {
   kubectl apply -f "${path}" "$@"
 }
 
-helm_repo_add() {
-  local name="$1"
-  local url="$2"
-
-  log "Adding Helm repository: ${name}"
-  helm repo add "${name}" "${url}" >/dev/null 2>&1 || true
-  helm repo update "${name}" >/dev/null
-}
-
-helm_release_exists() {
-  local release="$1"
-  local namespace="$2"
-
-  if [[ -n "${KUBECONFIG:-}" ]]; then
-    helm status "${release}" -n "${namespace}" --kubeconfig "${KUBECONFIG}" >/dev/null 2>&1
-  else
-    helm status "${release}" -n "${namespace}" >/dev/null 2>&1
-  fi
-}
-
-helm_upgrade_install() {
-  local release="$1"
-  local chart="$2"
-  local namespace="$3"
-  shift 3
-  local extra_args=("$@")
-
-  log "Installing/upgrading Helm release: ${release} (${chart})"
-  if [[ -n "${KUBECONFIG:-}" ]]; then
-    helm upgrade --install "${release}" "${chart}" \
-      -n "${namespace}" \
-      --kubeconfig "${KUBECONFIG}" \
-      "${extra_args[@]}"
-  else
-    helm upgrade --install "${release}" "${chart}" \
-      -n "${namespace}" \
-      "${extra_args[@]}"
-  fi
-}
-
-helm_uninstall() {
-  local release="$1"
-  local namespace="$2"
-
-  if helm_release_exists "${release}" "${namespace}"; then
-    log "Uninstalling Helm release: ${release}"
-    if [[ -n "${KUBECONFIG:-}" ]]; then
-      helm uninstall "${release}" -n "${namespace}" --kubeconfig "${KUBECONFIG}"
-    else
-      helm uninstall "${release}" -n "${namespace}"
-    fi
-  fi
-}
-
 wait_for_port() {
   local port="$1"
   local timeout="${2:-120}"

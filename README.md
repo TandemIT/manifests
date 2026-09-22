@@ -147,7 +147,7 @@ Installed by `scripts/01-bootstrap-first-master.sh`: K3s and kube-vip on the nod
 
 ### Application Layer (Argo CD-managed)
 
-Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — KEDA CRDs before the runner ScaledObject, cert-manager CRDs before the issuers, Garage before Gitea (Gitea's pod references Garage-minted S3 credentials), Gitea before the runners. The network foundation (MetalLB VIP) already exists from bootstrap, so Traefik's LoadBalancer IP is available from the first sync. `scripts/04-deploy-apps.sh` remains as the script-driven alternative and as the runtime-initialization reference (runner tokens, Garage layout).
+Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — KEDA CRDs before the runner ScaledObject, cert-manager CRDs before the issuers, Garage before Gitea (Gitea's pod references Garage-minted S3 credentials), Gitea before the runners. The network foundation (MetalLB VIP) already exists from bootstrap, so Traefik's LoadBalancer IP is available from the first sync. Runtime initialization (runner tokens, Garage layout) is handled entirely by in-cluster bootstrap Jobs — `apps/garage/job-bootstrap.yaml`, `apps/gitea-runner/job-bootstrap-tokens.yaml` — no separate script.
 
 | Component                 | Version | Namespace        | Purpose                                                        |
 | -------------------------- | ------- | ---------------- | --------------------------------------------------------------- |
@@ -331,7 +331,7 @@ Use a private-visibility owner (user or org) for `{owner}` — Gitea's package p
 `apps/gitea/cronjob-backup-postgresql.yaml` and `apps/gitea/cronjob-backup-gitea-data.yaml` run daily, dumping/tarring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
 
 - **PostgreSQL**: `pg_dump` against pgpool, gzipped, uploaded as `postgresql/gitea-<timestamp>.sql.gz`. 14-day retention, pruned by the same CronJob. Its `pg_dump` client image was switched this audit from `bitnamilegacy/postgresql:17` (Docker Hub's frozen "no longer updated" registry) to the actively-maintained Docker Official Image `postgres:17.11` — same major version as the actual server (17.6.0, below), pg_dump is compatible across patch releases of a major version.
-- **Gitea repository data**: tars `data/git`, `data/gitea/conf`, and `data/gitea/gitea.db`-adjacent state from the Gitea PVC (mounted read-only, scheduled onto the same node as the Gitea pod since local-path is node-pinned), gzipped, uploaded as `gitea-data/gitea-data-<timestamp>.tar.gz`. Same 14-day retention.
+- **Gitea repository data**: tars the entire Gitea PVC (`tar -czf ... -C /data .` — everything the chart mounts at `/data`: bare git repository objects, the Bleve search indexer, SSH host keys, and any other on-disk app state; LFS/packages/actions-artifacts/attachments/avatars/repo-archives are *not* here — they're on Garage, see [Gitea Object Storage on Garage](#gitea-object-storage-on-garage)), mounted read-only and scheduled onto the same node as the Gitea pod since local-path is node-pinned, gzipped, uploaded as `gitea-data/gitea-data-<timestamp>.tar.gz`. Same 14-day retention.
 
 This is **replication ≠ backup**: PostgreSQL's streaming replication and Valkey's cluster replicas protect against a node dying, not against a bad migration, an accidental deletion, or logical corruption, which replicate to every copy just as faithfully as legitimate writes. Neither CronJob has been exercised as a restore yet — treat that as required before relying on either in an incident. Restore procedure:
 
@@ -511,9 +511,11 @@ Generated once by `scripts/01-bootstrap-first-master.sh` (Argo CD syncs manifest
 | `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
 | `gitea-api-token`                   | `gitea-runners` | Gitea API token for KEDA scaler (placeholder)   |
 
-Sealed the same way as `gitea-admin` by `scripts/06-seal-secrets.sh` — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
+Each of these can be captured into git as a `SealedSecret` by `scripts/06-seal-secrets.sh` (same mechanism as `gitea-admin`) — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 
-Minted automatically once Garage and Gitea are up (`scripts/04-deploy-apps.sh` steps 7 and 10, or `apps/garage/job-bootstrap.yaml` / `apps/gitea-runner/job-bootstrap-tokens.yaml` in the GitOps path — these replace the placeholders above and add):
+⚠ **As of this audit, only the OIDC secret has actually been sealed and committed** (`apps/gitea/sealedsecret-gitea-oidc-authentik.yaml`) — `sealedsecret-gitea-admin.yaml`, `sealedsecret-postgresql-ha.yaml`, `sealedsecret-postgresql-ha-pgpool.yaml`, `apps/garage/sealedsecret-garage-rpc.yaml`, and `apps/anubis/sealedsecret-anubis-key.yaml` do not exist in this repo. Until `scripts/06-seal-secrets.sh` is run against the live cluster and its output committed, rebuilding the cluster from git alone does **not** restore the original admin password, database passwords, Garage RPC secret, or Anubis signing key — it falls back to `scripts/01-bootstrap-first-master.sh` minting brand-new random values, which is safe (nothing depends on the old values existing) but is a real disaster-recovery gap: any off-cluster backup of the *data* (Postgres dumps, Garage objects) would need credentials that no longer match a freshly-bootstrapped cluster. Run `bash scripts/06-seal-secrets.sh` against the live cluster and commit its output to close this gap.
+
+Minted automatically once Garage and Gitea are up, by the in-cluster bootstrap Jobs `apps/garage/job-bootstrap.yaml` and `apps/gitea-runner/job-bootstrap-tokens.yaml` — these replace the placeholders above and add:
 
 | Secret                             | Namespace  | Contents                                              |
 | ------------------------------------ | ---------- | ------------------------------------------------------ |
@@ -550,11 +552,11 @@ Provisions the VMs on Proxmox (Telmate provider, cloud-init clones of an Ubuntu 
 
 Contains all automation scripts for cluster lifecycle management:
 
-- **01-bootstrap-first-master.sh**: Initializes the first control-plane node and deploys core platform components.
+- **01-bootstrap-first-master.sh**: Initializes the first control-plane node, applies the network foundation, generates bootstrap secrets, and installs Argo CD + the root app-of-apps. From here Argo CD deploys the entire application stack (Traefik, cert-manager, Gitea, etc.) from `argocd/apps/` — there is no separate "deploy apps" script.
 - **02-join-control-plane.sh**: Used to join additional control-plane nodes to the cluster.
 - **03-join-worker.sh**: Used to join worker nodes.
-- **04-deploy-apps.sh**: Deploys the full application stack (Traefik, cert-manager, Gitea, etc.).
 - **05-reset-apps.sh**: Removes all application workloads from the cluster.
+- **06-seal-secrets.sh**: Seals cluster secrets into git-committable `SealedSecret` manifests.
 - **lib-functions.sh**: Shared Bash functions used by other scripts.
 
 ### argocd/
@@ -646,18 +648,6 @@ All ingress traffic is routed through Traefik, which leverages its middleware sy
 - **IP allowlisting** to restrict a route to specific source CIDRs
 
 This approach ensures consistent, centralized traffic management across all applications and services deployed in the cluster.
-
----
-
-## Installation & Configuration Notes
-
-1. **Clone the repository to all nodes.**
-2. **Run `install.sh` on the first control-plane node** to bootstrap the cluster and deploy platform components.
-3. **Join additional control-plane and worker nodes** using the provided scripts in the `scripts/` directory.
-4. **Deploy the application stack** with `scripts/04-deploy-apps.sh` after the platform is ready.
-5. **Reset or tear down applications** with `scripts/05-reset-apps.sh` as needed.
-
-All scripts are idempotent and safe to re-run. Secrets are generated at deploy time and stored as Kubernetes Secrets (never committed to the repo).
 
 ---
 
