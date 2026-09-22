@@ -81,6 +81,21 @@ spec:
                 --instance "${GITEA_INSTANCE_URL}" \
                 --token "${GITEA_RUNNER_REGISTRATION_TOKEN}" \
                 --name "${GITEA_RUNNER_NAME}"
+          # Verified live (Docker Desktop test cluster, 2026-09-22): this
+          # container had no resources block at all. This namespace's
+          # ResourceQuota (resourcequota.yaml) tracks requests/limits for
+          # both cpu and memory, so every container must declare all four or
+          # the pod is refused at admission — meaning every single runner
+          # pod (all 5+ replicas) failed to create, on every sync, until
+          # this was added. One-shot HTTP registration call, same binary as
+          # the runner container below but far lighter — sized accordingly.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
           volumeMounts:
             - name: config
               mountPath: /config
