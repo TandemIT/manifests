@@ -195,7 +195,8 @@ else
   ANUBIS="$(live_value anubis-key anubis ED25519_PRIVATE_KEY_HEX)"
   [[ -n "${ANUBIS}" ]] || ANUBIS="$(openssl rand -hex 32)"
   seal_secret anubis-key anubis "${OUT}" "ED25519_PRIVATE_KEY_HEX=${ANUBIS}"
-  add_resource "${MANIFESTS_DIR}/apps/anubis/kustomization.yaml" sealedsecret-anubis-key.yaml
+  # apps/anubis is a plain manifest directory (no kustomization.yaml) — Argo
+  # CD and `kubectl apply -f` pick up the new file automatically.
 fi
 
 # Optional — needs an OAuth2 provider/application per entry, created by you.

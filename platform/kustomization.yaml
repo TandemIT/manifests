@@ -12,4 +12,4 @@ kind: Kustomization
 # it provides the API VIP and can never be applied via the API server.
 resources:
   - metallb/
-  - coredns/
+  - coredns/coredns-custom.yaml

@@ -1,5 +1,22 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+namespace: gitea-runners
+
+commonAnnotations:
+  app.kubernetes.io/part-of: ci-runners
+  app.kubernetes.io/managed-by: kustomize
+
 resources:
-  - base
+  - namespace.yaml
+  - serviceaccount.yaml
+  - bootstrap-rbac.yaml
+  - job-bootstrap-tokens.yaml
+  - configmap.yaml
+  - service.yaml
+  - deployment.yaml
+  - scaledobject.yaml
+  - triggerauthentication.yaml
+  - networkpolicy.yaml
+  - networkpolicy-metrics.yaml
+  - resourcequota.yaml

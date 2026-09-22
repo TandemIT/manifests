@@ -162,7 +162,7 @@ kubectl rollout status deployment/"${TRAEFIK_DEPLOYMENT}" -n traefik --timeout=1
 # Anubis sits between Traefik and each protected backend; deploy before Gitea
 # so the IngressRoute and TLS certificate are ready first.
 step_header 6 "Deploying Anubis"
-apply_kustomization "${MANIFESTS_DIR}/apps/anubis"
+apply_manifests "${MANIFESTS_DIR}/apps/anubis"
 
 # Must come before Gitea — Gitea's pod spec references garage-gitea-storage-
 # credentials via secretKeyRef and fails to start (CreateContainerConfigError)

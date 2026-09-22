@@ -101,6 +101,14 @@ apply_kustomization() {
   kubectl apply -k "${path}" "$@"
 }
 
+apply_manifests() {
+  local path="$1"
+  shift
+  [[ -d "${path}" ]] || die "Manifest path not found: ${path}"
+  log "Applying: ${path}"
+  kubectl apply -f "${path}" "$@"
+}
+
 helm_repo_add() {
   local name="$1"
   local url="$2"

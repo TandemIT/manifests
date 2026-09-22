@@ -247,7 +247,7 @@ kubectl get secret -n kube-system \
 # Infrastructure manifests (networkpolicies, routes, etc.)
 kubectl apply -k apps/gitea/
 kubectl apply -k apps/gitea-runner/
-kubectl apply -k apps/anubis/
+kubectl apply -f apps/anubis/
 kubectl apply -k apps/garage/
 
 # Gitea Helm chart upgrade (edit apps/gitea/values.yaml first)

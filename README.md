@@ -331,7 +331,7 @@ The runner `Deployment` holds a **warm floor of 5 replicas**. KEDA watches the G
 | Jobs queued       | 1 runner per queued job, up to 10                            |
 | Post-job cooldown | Scales back down to the floor after 120 seconds              |
 
-A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/base/resourcequota.yaml`) caps the worst case so a burst toward 10 replicas cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
+A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/resourcequota.yaml`) caps the worst case so a burst toward 10 replicas cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
 
 ---
 
@@ -471,7 +471,7 @@ Generated once by `scripts/01-bootstrap-first-master.sh` (Argo CD syncs manifest
 
 Sealed the same way as `gitea-admin` by `scripts/06-seal-secrets.sh` — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 
-Minted automatically once Garage and Gitea are up (`scripts/04-deploy-apps.sh` steps 7 and 10, or `apps/garage/job-bootstrap.yaml` / `apps/gitea-runner/base/job-bootstrap-tokens.yaml` in the GitOps path — these replace the placeholders above and add):
+Minted automatically once Garage and Gitea are up (`scripts/04-deploy-apps.sh` steps 7 and 10, or `apps/garage/job-bootstrap.yaml` / `apps/gitea-runner/job-bootstrap-tokens.yaml` in the GitOps path — these replace the placeholders above and add):
 
 | Secret                             | Namespace  | Contents                                              |
 | ------------------------------------ | ---------- | ------------------------------------------------------ |
@@ -541,7 +541,7 @@ Contains application-specific Kubernetes manifests and Kustomize overlays:
 - **traefik/**: Ingress controller configuration. The `base/` subdirectory includes deployment, service, RBAC, and IngressClass resources.
 - **cert-manager/**: PKI automation for TLS certificates. Includes `base/` for upstream release and `issuers/` for Let's Encrypt ClusterIssuers.
 - **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment (including the Garage-backed object storage and postgresql-ha credential wiring). - `cronjob-backup-*.yaml`: PostgreSQL and Gitea-data backups to Garage. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, Valkey, and Garage.
-- **gitea-runner/**: CI/CD runner deployment. The `base/` subdirectory includes the runner Deployment, KEDA ScaledObject for autoscaling, ResourceQuota for burst protection, and NetworkPolicy for isolation.
+- **gitea-runner/**: CI/CD runner deployment — runner Deployment, KEDA ScaledObject for autoscaling, ResourceQuota for burst protection, and NetworkPolicy for isolation.
 - **garage/**: Self-hosted S3-compatible object storage — Gitea's LFS/packages/actions storage and the platform backup CronJobs' upload target. Independent application, own `garage` namespace.
 - **anubis/**: Example application with its own namespace, certificate, deployment, service, ingress, middleware, and network policies.
 
