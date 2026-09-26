@@ -30,7 +30,8 @@ data:
         user_agent_regex: "^git/"
         action: ALLOW
 
-      # Allow curl-based tooling (Gitea Actions runner, CI scripts)
+      # Allow curl-based tooling (CI scripts, API calls). The in-cluster
+      # runners talk to gitea-http directly and never pass through Anubis.
       - name: ci-curl
         user_agent_regex: "^curl/"
         action: ALLOW

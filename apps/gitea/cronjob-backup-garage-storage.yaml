@@ -10,8 +10,8 @@
 # only; garage-backups-credentials is scoped to platform-backups only —
 # neither key can read one bucket and write the other. This mirrors the
 # bucket to local emptyDir storage with the first key, tars it, then
-# re-uploads the archive with the second key — the same two-credential split
-# cronjob-backup-gitea-data.yaml already uses for the PVC tar step.
+# uploads the archive with the second key (the same garage-backups-credentials
+# the other two backup CronJobs upload with).
 #
 # Caveat: the mirror step needs node ephemeral storage roughly equal to the
 # live bucket size (the tar step then needs a second, similar amount

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Join a K3s worker node (worker1-3).
-# Run as root. Requires K3S_TOKEN and VIP from the first master bootstrap.
+# Run as root. Requires K3S_TOKEN from the first master bootstrap; VIP
+# defaults to 172.16.10.50, K3S_VERSION is optional.
 
 set -euo pipefail
 

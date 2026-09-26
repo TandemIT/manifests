@@ -9,8 +9,8 @@ image:
   registry: ""
   repository: gitea/gitea
   # Keep in sync with the chart version pinned in argocd/apps/gitea.yaml
-  # (chart 12.7.0 → Gitea 1.27.x). Tag overrides the chart's appVersion to
-  # the specific patch release.
+  # (chart 12.7.0 → appVersion 1.27.0). Tag overrides the chart's appVersion
+  # to the specific patch release.
   tag: "1.27.3"
   pullPolicy: IfNotPresent
   rootless: true
@@ -95,7 +95,8 @@ postgresql-ha:
   # passwords (postgresql.postgresPassword/password/repmgrPassword,
   # pgpool.adminPassword/srCheckPassword) — existingSecret bypasses them
   # entirely rather than overriding them with different literals in git.
-  # Sealed by scripts/06-seal-secrets.sh, same pattern as gitea-admin.
+  # Both secrets are created only by scripts/06-seal-secrets.sh (not by
+  # scripts/01-bootstrap-first-master.sh, unlike gitea-admin).
   global:
     postgresql:
       existingSecret: postgresql-ha-credentials
@@ -195,7 +196,7 @@ gitea:
   # sourced from a Secret rather than the plaintext gitea.config.storage
   # block above. Secret is minted by the garage-bootstrap Job (RBAC in
   # apps/gitea/rbac-garage-bootstrap.yaml), not sealed — same treatment as
-  # the other runtime-minted Garage credentials (garage-s3-credentials).
+  # the other runtime-minted Garage credentials (garage-backups-credentials).
   additionalConfigFromEnvs:
     - name: GITEA__STORAGE__MINIO_ACCESS_KEY_ID
       valueFrom:

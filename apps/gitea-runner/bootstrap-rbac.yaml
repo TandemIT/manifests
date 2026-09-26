@@ -1,5 +1,5 @@
-# RBAC for the runner-token-bootstrap Job: create/refresh the two token
-# secrets in this namespace. Read access to gitea/gitea-admin is granted by
+# RBAC for the runner-token-bootstrap Job: create/refresh the runner
+# registration token secret in this namespace. Read access to gitea/gitea-admin is granted by
 # a Role in the gitea namespace (apps/gitea/rbac-runner-bootstrap.yaml).
 apiVersion: v1
 kind: ServiceAccount
@@ -19,10 +19,9 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create"]
-  # "gitea-api-token" was also listed here for the KEDA ScaledObject's
-  # TriggerAuthentication — commented out along with it, not deleted (see
-  # apps/gitea-runner/scaledobject.yaml, checklist item 5). Add it back to
-  # resourceNames below when re-enabling: ["gitea-runner-registration", "gitea-api-token"]
+  # PENDING: KEDA Gitea runner scaler release (kedacore/keda#8087)
+  # Status: the rule below is active for gitea-runner-registration only; when enabling KEDA, set resourceNames to ["gitea-runner-registration", "gitea-api-token"] (scaledobject.yaml checklist item 5).
+  # Tracking: https://github.com/kedacore/keda/pull/8087
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["gitea-runner-registration"]

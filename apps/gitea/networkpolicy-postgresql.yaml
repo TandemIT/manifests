@@ -1,5 +1,7 @@
 ---
-# Allows Gitea application pods to reach pgpool on 5432.
+# pgpool: ingress only from Gitea application pods (app.kubernetes.io/name:
+# gitea) on 5432 — this does not include the backup-postgresql CronJob pods.
+# Egress only to PostgreSQL pods on 5432 and kube-dns.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

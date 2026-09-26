@@ -4,8 +4,9 @@
 # StatefulSet (wave 0) → garage-bootstrap Job (wave 1: cluster layout + S3
 # credentials for Gitea object storage and backups).
 #
-# App-level wave is 5 (before gitea-config's namespace/RBAC-dependent "gitea"
-# Application at wave 6): the garage-bootstrap Job writes
+# App-level wave is 5: after gitea-config (wave 4, creates the gitea
+# namespace and the RBAC the Job writes through) and before the "gitea"
+# Application (wave 6). The garage-bootstrap Job writes
 # garage-gitea-storage-credentials and garage-backups-credentials into the
 # gitea namespace, which the Gitea Helm release's pod spec references via
 # secretKeyRef — those Secrets must exist before Gitea's pod is created.

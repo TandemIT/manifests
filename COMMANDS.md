@@ -17,12 +17,12 @@ MetalLB manages LoadBalancer services (L2 mode):
 
 | Component | Version              |
 | --------- | -------------------- |
-| K3s       | v1.32.3+k3s1         |
+| K3s       | v1.32.3+k3s1 (installed; system-upgrade-controller then tracks the v1.32 channel) |
 | kube-vip  | v0.8.7               |
 | MetalLB   | v0.14.9              |
 | kured     | v1.15.0              |
 | system-upgrade-controller | v0.20.1 |
-| sealed-secrets | v2.17.4          |
+| sealed-secrets | chart 2.17.4     |
 | KEDA      | v2.15.1              |
 | Traefik   | v3.3.4 (chart 34.4.1) |
 | Gitea     | 1.27.3 (chart 12.7.0) |
@@ -137,7 +137,7 @@ app-of-apps (`argocd/root-app.yaml`), which reconciles every Application in
 `argocd/apps/` from git — cert-manager, Traefik, Anubis, Garage, Gitea
 (Helm chart + values from this repo), and the runner stack, in sync-wave
 order. Runtime credentials that Argo CD cannot invent (Garage's S3 keys, the
-runner registration token, the KEDA API token) are minted automatically by
+runner registration token) are minted automatically by
 in-cluster bootstrap Jobs (`apps/garage/job-bootstrap.yaml`,
 `apps/gitea-runner/job-bootstrap-tokens.yaml`) the first time each app syncs.
 
@@ -147,7 +147,7 @@ Watch convergence:
 kubectl get applications -n argocd -w
 ```
 
-Runners hold a warm floor of 5 replicas and scale up to 10 when CI jobs are queued (see [KEDA runner scaling](#keda-runner-scaling)).
+Runners run as a fixed 5-replica Deployment; KEDA autoscaling is pending an upstream KEDA release (see [Runner scaling](#runner-scaling)).
 
 ---
 
@@ -162,11 +162,11 @@ Responsibilities are split between two components:
 
 kube-vip is **not** involved in application traffic routing. MetalLB operates in L2 mode using ARP, which is compatible with Proxmox LAN environments.
 
-**IP pool** (update `platform/metallb/ipaddresspool.yaml` to match your LAN):
+**IP pool** (`platform/metallb/ipaddresspool.yaml` — a single public address):
 
 ```yaml
 addresses:
-  - 192.168.1.200-192.168.1.220
+  - 145.89.192.138-145.89.192.138
 ```
 
 To apply pool changes:
@@ -192,10 +192,15 @@ Everything else (KEDA, kured, Traefik, ...) is reconciled by Argo CD — just
 commit and push.
 
 > **kube-vip exception** — it is a static pod, not managed by kubectl. If you change
-> `platform/system/kube-vip.yaml`, copy it manually to each control plane node:
+> `platform/system/kube-vip.yaml`, re-render it on each control plane node with the
+> same interface/VIP rewrite the bootstrap scripts apply (a plain `cp` would keep
+> the template's `eth0`):
 >
 > ```bash
-> cp platform/system/kube-vip.yaml /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+> IFACE="$(ip -4 route show default | awk '{print $5; exit}')"
+> sed -e "s|value: eth0|value: ${IFACE}|" \
+>     -e "s|value: \"172.16.10.50\"|value: \"${VIP:-172.16.10.50}\"|" \
+>   platform/system/kube-vip.yaml > /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
 > ```
 
 ## Secrets (Day-2)
@@ -206,14 +211,15 @@ them all on first run; to **rotate** one, delete its `sealedsecret-*.yaml`
 file and re-run the script, or reseal by hand:
 
 ```bash
-# Update the Gitea OIDC provider credentials:
-kubectl create secret generic gitea-oidc \
+# Update the Gitea OIDC provider credentials (one secret per provider slug,
+# gitea-oidc-<slug>; the existing provider is "authentik"):
+kubectl create secret generic gitea-oidc-authentik \
   --namespace gitea \
   --from-literal=key="<CLIENT_ID>" \
   --from-literal=secret="<CLIENT_SECRET>" \
   --dry-run=client -o yaml \
   | kubeseal --cert sealed-secrets-cert.pem --format yaml \
-  > apps/gitea/sealedsecret-gitea-oidc.yaml
+  > apps/gitea/sealedsecret-gitea-oidc-authentik.yaml
 # then: git commit + push — Argo CD applies it on sync.
 
 # Rotate the Anubis signing key (causes all active challenge cookies to expire):
@@ -229,7 +235,7 @@ Jobs (`runner-token-bootstrap` in gitea-runners, `garage-bootstrap` in
 garage). To re-mint, delete the secret and the Job, then let Argo CD sync:
 
 ```bash
-kubectl delete secret gitea-api-token gitea-runner-registration -n gitea-runners
+kubectl delete secret gitea-runner-registration -n gitea-runners
 kubectl delete job runner-token-bootstrap -n gitea-runners
 ```
 
@@ -276,20 +282,24 @@ kubectl kustomize apps/gitea-runner/
 
 ---
 
-## KEDA runner scaling
+## Runner scaling
+
+The runners are a fixed `replicas: 5` Deployment. KEDA autoscaling is
+**pending** an upstream KEDA Gitea runner scaler release
+([kedacore/keda#8087](https://github.com/kedacore/keda/pull/8087)); the
+prepared config is commented out in `apps/gitea-runner/scaledobject.yaml`,
+which also holds the enablement checklist.
 
 ```bash
 # Current replica count
 kubectl get deployment gitea-runner -n gitea-runners
 
-# KEDA status
-kubectl get scaledobject -n gitea-runners
-kubectl describe scaledobject gitea-runner -n gitea-runners
-
 # Runner registration token
 kubectl get secret gitea-runner-registration -n gitea-runners -o jsonpath='{.data.token}' | base64 -d
 
-# KEDA API token
+# Once KEDA autoscaling is enabled:
+kubectl get scaledobject -n gitea-runners
+kubectl describe scaledobject gitea-runner -n gitea-runners
 kubectl get secret gitea-api-token -n gitea-runners -o jsonpath='{.data.token}' | base64 -d
 ```
 

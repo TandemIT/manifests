@@ -9,8 +9,10 @@
 #
 # No autoscaler today — replicas is a fixed 5 (see deployment.yaml). This
 # quota is a safety net against a manual replica bump rather than a KEDA
-# burst: at 5 replicas the theoretical worst case is ~7.5 CPU / 7.5Gi limits
-# (5 x (dind 1CPU/1Gi + runner 500m/512Mi)), comfortably inside this quota.
+# burst: at 5 replicas the worst case is 7.5 CPU / 7.5Gi limits
+# (5 x (dind 1CPU/1Gi + runner 500m/512Mi)), inside limits.cpu 8 /
+# limits.memory 10Gi. A 6th pod — including the maxSurge: 1 pod during a
+# rolling update — would need 9 CPU of limits and exceed limits.cpu.
 apiVersion: v1
 kind: ResourceQuota
 metadata:

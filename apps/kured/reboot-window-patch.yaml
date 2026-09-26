@@ -1,6 +1,7 @@
 # The only cluster-specific customization over upstream: the reboot window
-# and polling period. Upstream's own --reboot-sentinel flag (and the
-# /sentinel hostPath mount it depends on) is left untouched.
+# and polling period. This patch replaces upstream's whole command list, so
+# it repeats upstream's --reboot-sentinel=/sentinel/reboot-required
+# unchanged (/sentinel is upstream's hostPath mount of the host's /var/run).
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

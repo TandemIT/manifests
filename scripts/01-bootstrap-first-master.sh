@@ -3,7 +3,7 @@
 # Run as root on master1 only. Other nodes use 02-join-control-plane.sh / 03-join-worker.sh.
 #
 # This script does only what Argo CD cannot do for itself:
-#   1. Node prerequisites + kube-vip static pod (control-plane HA)
+#   1. Node prerequisites (currently a no-op) + kube-vip static pod (control-plane HA)
 #   2. K3s cluster init
 #   3. Network foundation (platform/): MetalLB + IP pool, CoreDNS override.
 #      Deliberately outside Argo CD so the cluster's addresses are in place
@@ -81,8 +81,11 @@ log "MetalLB + CoreDNS override applied from platform/"
 # here and never overwritten; the runner/API tokens start as placeholders
 # because they can only be minted against a running Gitea — the
 # runner-token-bootstrap Job (apps/gitea-runner/job-bootstrap-tokens.yaml,
-# wave 0 of the gitea-runner Application) does that automatically once Argo
-# CD takes over, no manual step required.
+# wave 0 of the gitea-runner Application) mints the registration token
+# automatically once Argo CD takes over. gitea-api-token stays a placeholder
+# while KEDA autoscaling is PENDING (see apps/gitea-runner/scaledobject.yaml).
+# postgresql-ha-credentials / postgresql-ha-pgpool-credentials are NOT
+# created here — only scripts/06-seal-secrets.sh creates them.
 step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
@@ -138,7 +141,8 @@ step_header 7 "Installing Argo CD"
 # live (Docker Desktop test cluster, 2026-09-22): the core Argo CD
 # components install fine regardless, and the "argocd" self-management
 # Application (argocd/apps/argocd.yaml) picks up and successfully creates
-# the remaining 4 resources on its own once cert-manager/Traefik exist - no
+# the remaining self-ingress resources (4 files, 5 objects) on its own once
+# cert-manager/Traefik exist - no
 # manual step needed. `|| true` here only survives that one known, expected,
 # self-resolving partial failure; a real installation problem still shows up
 # in the rollout status waits right below.

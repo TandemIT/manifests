@@ -9,6 +9,10 @@ metadata:
 spec:
   # Targets the Gitea application pods created by the Helm chart.
   # The chart uses app.kubernetes.io/name: gitea (not the legacy app: gitea label).
+  # Ingress to Gitea: traefik namespace (3000, 2222), any pod in gitea-runners
+  # (3000), anubis pods (3000). Egress: pgpool 5432, valkey-cluster 6379,
+  # kube-dns 53, any address on 443/587; Garage 3900 is added by
+  # networkpolicy-garage.yaml. Everything else is denied.
   podSelector:
     matchLabels:
       app.kubernetes.io/name: gitea
@@ -32,10 +36,10 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    # Disabled along with the KEDA ScaledObject (apps/gitea-runner/
-    # scaledobject.yaml — commented out, not deleted; see its header comment
-    # for the full re-enablement checklist, this is item 6). Uncomment when
-    # that scaler is re-enabled — KEDA needs to reach Gitea to poll job status.
+    # PENDING: KEDA Gitea runner scaler release (kedacore/keda#8087)
+    # Status: configured; allows any pod in `keda` to reach Gitea on TCP 3000 to poll job status. Enable by uncommenting (apps/gitea-runner/scaledobject.yaml checklist item 6).
+    # Tracking: https://github.com/kedacore/keda/pull/8087
+    # The traefik, gitea-runners and anubis rules around it are active; only this rule waits.
     # - from:
     #     - namespaceSelector:
     #         matchLabels:
@@ -43,7 +47,8 @@ spec:
     #   ports:
     #     - protocol: TCP
     #       port: 3000
-    # Anubis fetches Open Graph metadata via OG_PASSTHROUGH
+    # Anubis pods: proxied browser traffic (Anubis TARGET) and Open Graph
+    # metadata fetches (OG_PASSTHROUGH)
     - from:
         - namespaceSelector:
             matchLabels:
@@ -92,7 +97,7 @@ spec:
       ports:
         - protocol: TCP
           port: 443
-    # Allow outbound SMTP-TLS for email notifications.
+    # Allow outbound SMTP submission (587, STARTTLS) for email notifications.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

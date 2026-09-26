@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Reset application-layer resources.
+# Reset application-layer resources: deletes the namespaces cert-manager,
+# traefik, anubis, gitea, gitea-runners and garage plus Traefik/cert-manager
+# cluster-scoped leftovers. It does not touch Argo CD or its Applications,
+# so a running Argo CD (automated sync + selfHeal) recreates everything.
 
 set -euo pipefail
 

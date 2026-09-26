@@ -1,6 +1,6 @@
 # Connects the Garage replicas into one cluster, applies the layout, and
 # mints S3 credentials for Garage's consumers: Gitea's LFS/packages/actions
-# object storage, and the PostgreSQL + Gitea-data backup CronJobs. Generic
+# object storage, and the backup CronJobs in apps/gitea/. Generic
 # platform-storage bootstrap — not tied to any one consumer.
 #
 # The gitea-storage and platform-backups secrets are created in the gitea

@@ -14,8 +14,9 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # S3 API access from the gitea namespace: Gitea itself (LFS/packages/
-    # actions storage) and the two backup CronJobs (platform-backups bucket).
+    # S3 API (3900) from any pod in the gitea namespace — Gitea itself
+    # (LFS/packages/actions storage) and the three backup CronJobs. The
+    # admin port 3903 is not reachable.
     - from:
         - namespaceSelector:
             matchLabels:

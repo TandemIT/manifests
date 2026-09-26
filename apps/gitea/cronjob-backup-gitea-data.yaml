@@ -1,7 +1,8 @@
-# Daily tar of the Gitea PVC (repo data + app state — apps/gitea/values.yaml
-# persistence.claimName: gitea-shared-storage, mounted read-only), uploaded
-# to the Garage platform-backups bucket. Complements
-# cronjob-backup-postgresql.yaml; see README's "Backups" section for what
+# Daily tar of the Gitea PVC (repo data + app state — the chart's default
+# persistence.claimName gitea-shared-storage, not overridden in
+# apps/gitea/values.yaml; mounted read-only), uploaded to the Garage
+# platform-backups bucket. Complements cronjob-backup-postgresql.yaml and
+# cronjob-backup-garage-storage.yaml; see README's "Backups" section for what
 # this does and does not protect against.
 #
 # local-path PVCs are node-pinned (README: "Storage: local-path, its limits

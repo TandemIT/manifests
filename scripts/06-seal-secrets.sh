@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Seal cluster secrets into git-committable SealedSecret manifests.
 #
-# Turns the imperatively-created secrets (scripts/01/04) into SealedSecret
+# Turns the imperatively-created secrets (scripts/01) into SealedSecret
 # files that Argo CD syncs like any other manifest. For each secret it:
-#   1. reuses the live in-cluster value when one exists (migration never
-#      rotates credentials), otherwise generates or prompts for a value
+#   1. reuses the live in-cluster value when one exists (sealing never
+#      rotates credentials), otherwise generates or prompts for a value.
+#      postgresql-ha-credentials / postgresql-ha-pgpool-credentials are
+#      not created by scripts/01 — this script is their only source.
 #   2. writes the SealedSecret next to the app that consumes it
-#   3. adds the file to that app's kustomization.yaml
+#   3. adds the file to that app's kustomization.yaml (apps/anubis has none;
+#      its directory source picks the file up as-is)
 #   4. annotates the live secret so the controller is allowed to adopt it
 #
 # Sealed files (commit all of them):
@@ -18,9 +21,10 @@
 #   apps/anubis/sealedsecret-anubis-key.yaml
 #   apps/garage/sealedsecret-garage-rpc.yaml
 #
-# Runtime tokens (runner registration, KEDA API, Garage S3, Garage-backed
-# Gitea object storage, backup credentials) are NOT sealed — they are minted
-# in-cluster by the bootstrap Jobs in apps/gitea-runner/ and apps/garage/.
+# Runtime tokens (runner registration, Garage-backed Gitea object storage,
+# backup credentials; the KEDA API token once KEDA autoscaling is enabled)
+# are NOT sealed — they are minted in-cluster by the bootstrap Jobs in
+# apps/gitea-runner/ and apps/garage/.
 #
 # Requirements: kubectl (with cluster access), kubeseal, openssl.
 # The sealed-secrets controller (argocd/apps/sealed-secrets.yaml) must be

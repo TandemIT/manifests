@@ -1,13 +1,14 @@
-# PREPARED FOR FUTURE USE — EVERYTHING BELOW IS COMMENTED OUT, NOT ACTIVE.
-# Not listed in kustomization.yaml; it has zero effect on the live cluster.
-# See scaledobject.yaml in this directory for full context on
-# kedacore/keda#8087 and the checklist to run through before uncommenting.
+# PENDING: KEDA Gitea runner scaler release (kedacore/keda#8087)
+# Status: prepared but unconfirmed; not in any KEDA release as of v2.21.0 (checked 2026-09-26). Enable by uncommenting after the checklist in scaledobject.yaml.
+# Tracking: https://github.com/kedacore/keda/pull/8087
 #
-# When re-enabled, this needs a Gitea personal access token scoped to match
-# the ScaledObject's `scope:` — the same read:admin scope the old, removed
-# gitea-api-token secret used for the (broken) github-runner trigger. Restore
-# the gitea-api-token minting block in job-bootstrap-tokens.yaml (see git
-# history) before uncommenting the block below.
+# Everything below is commented out and this file is not listed in
+# kustomization.yaml, so it has no effect on the cluster.
+#
+# Needs the gitea-api-token secret: a Gitea personal access token scoped to
+# match the ScaledObject's `scope:` (the old github-runner setup used
+# read:admin). Uncomment the gitea-api-token minting block in
+# job-bootstrap-tokens.yaml (checklist item 5) before uncommenting this.
 #
 # apiVersion: keda.sh/v1alpha1
 # kind: TriggerAuthentication

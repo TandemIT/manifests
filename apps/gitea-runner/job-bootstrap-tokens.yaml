@@ -1,22 +1,18 @@
 # Mints the runner registration token against the live Gitea API.
 #
-# Syncs at wave 0 (with the namespace and RBAC); the runner Deployment is
-# wave 1, so it only starts once a real token exists. The Job is idempotent:
-# it no-ops once the secret already holds a non-placeholder value. To force
-# a re-mint (e.g. after revoking the token in Gitea):
+# Syncs at wave 0 (no sync-wave annotation, same as the namespace and RBAC);
+# the runner Deployment is wave 1, so it only starts once a real token
+# exists. The Job is idempotent: it no-ops once the secret already holds a
+# non-placeholder value. To force a re-mint (e.g. after revoking the token
+# in Gitea):
 #   kubectl delete secret gitea-runner-registration -n gitea-runners
 #   kubectl delete job runner-token-bootstrap -n gitea-runners
 # and let Argo CD re-sync.
 #
-# NOTE (one-time cleanup on a cluster deployed before this change): this Job
-# used to also mint gitea-api-token for a KEDA ScaledObject whose
-# github-runner trigger didn't actually work against Gitea's instance-wide
-# runner scope (see deployment.yaml). That ScaledObject/TriggerAuthentication
-# pair is now commented-out placeholders in this directory, prepared for
-# kedacore/keda#8087 instead — see scaledobject.yaml for the re-enablement
-# checklist, which includes restoring this minting block. Until then, if
-# that secret and the "keda-scaler" Gitea personal access token it wraps
-# still exist on a live cluster, delete them by hand — they're unused now:
+# Cleanup on a cluster deployed while KEDA autoscaling was active: the
+# gitea-api-token secret and the "keda-scaler" Gitea personal access token
+# it wraps are unused while the gitea-api-token minting below is commented
+# out (PENDING, see scaledobject.yaml). Delete them by hand if they exist:
 #   kubectl delete secret gitea-api-token -n gitea-runners
 #   curl -X DELETE -u "<admin-user>:<admin-pass>" \
 #     http://gitea-http.gitea.svc.cluster.local:3000/api/v1/users/<admin-user>/tokens/keda-scaler
@@ -33,7 +29,7 @@ metadata:
     # them and is rejected ("spec.selector: Required value") on every sync after
     # the first, wedging the Application. Force=true makes Argo CD delete and
     # recreate instead; the idempotency guard in the script below keeps re-runs
-    # safe (they no-op once both secrets hold non-placeholder values).
+    # safe (they no-op once the secret holds a non-placeholder value).
     argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 20
@@ -74,10 +70,10 @@ spec:
                 *) echo "Exists: gitea-runner-registration" ;;
               esac
 
-              # Disabled along with the KEDA ScaledObject, not deleted — see
-              # apps/gitea-runner/scaledobject.yaml, checklist item 5.
-              # Uncomment (strip the leading "# ") to restore gitea-api-token
-              # minting when re-enabling KEDA autoscaling.
+              # PENDING: KEDA Gitea runner scaler release (kedacore/keda#8087)
+              # Status: configured; mints the KEDA API token (gitea-api-token). Enable by uncommenting (strip the leading "# ") — scaledobject.yaml checklist item 5.
+              # Tracking: https://github.com/kedacore/keda/pull/8087
+              # The gitea-runner-registration minting above is active; only this block waits.
               # current=$(kubectl get secret gitea-api-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
               # case "${current}" in
               #   ""|placeholder*)
@@ -107,7 +103,7 @@ spec:
               # declare one once a namespace quota tracks that resource —
               # without this the Job's pod is refused at admission
               # ("forbidden: failed quota ... must specify limits.cpu") on
-              # every single sync, so the runner registration/KEDA tokens
-              # never actually mint.
+              # every single sync, so the runner registration token never
+              # actually mints.
               cpu: 100m
               memory: 128Mi

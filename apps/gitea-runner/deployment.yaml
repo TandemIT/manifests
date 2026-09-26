@@ -14,11 +14,10 @@ spec:
   # Fixed replica count — no autoscaler. KEDA's github-runner trigger doesn't
   # support Gitea's instance-wide runner scope (its runnerScope enum only
   # accepts org/ent/repo, not Gitea's "global" instance token), and no
-  # working Gitea-native KEDA scaler exists upstream yet (kedacore/keda#8087
-  # — open, unreviewed, unmerged as of 2026-09). See the commented-out
-  # scaledobject.yaml/triggerauthentication.yaml in this directory — kept
-  # in place (not deleted) as a prepared, ready-to-verify starting point for
-  # when that scaler ships.
+  # Gitea-native KEDA scaler has been released (kedacore/keda#8087 — open,
+  # unreviewed, unmerged as of 2026-09-26). KEDA autoscaling is PENDING: see
+  # the commented-out scaledobject.yaml/triggerauthentication.yaml in this
+  # directory for the prepared config and the enablement checklist.
   replicas: 5
   selector:
     matchLabels:

@@ -1,3 +1,7 @@
+# Ingress to runner pods (app: gitea-runner): only TCP 9101 (runner metrics),
+# only from pods in the `monitoring` namespace. As the only Ingress policy
+# selecting these pods, it denies all other ingress to them. No `monitoring`
+# namespace is defined in this repo.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

@@ -161,8 +161,8 @@ step_header() {
   log "Step ${step_num}: ${description}"
 }
 
-# Stub — Longhorn prerequisites (open-iscsi, nfs-common) are not currently
-# needed; kept so callers don't have to change when they are re-enabled.
+# No-op: no node prerequisites are currently needed. Kept as the hook that
+# scripts/01-03 call as step 1.
 install_node_prerequisites() {
   return 0
 }

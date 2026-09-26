@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Join an additional K3s control plane node (master2, master3).
-# Run as root. Requires K3S_TOKEN and VIP from the first master bootstrap.
+# Run as root. Requires K3S_TOKEN from the first master bootstrap; VIP
+# defaults to 172.16.10.50, K3S_VERSION and VIP_INTERFACE are optional.
 
 set -euo pipefail
 
