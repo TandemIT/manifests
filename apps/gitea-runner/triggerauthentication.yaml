@@ -1,12 +1,23 @@
-apiVersion: keda.sh/v1alpha1
-kind: TriggerAuthentication
-metadata:
-  name: gitea-keda-auth
-  labels:
-    app.kubernetes.io/name: gitea-runner
-    app.kubernetes.io/part-of: ci-runners
-spec:
-  secretTargetRef:
-    - parameter: personalAccessToken
-      name: gitea-api-token
-      key: token
+# PREPARED FOR FUTURE USE — EVERYTHING BELOW IS COMMENTED OUT, NOT ACTIVE.
+# Not listed in kustomization.yaml; it has zero effect on the live cluster.
+# See scaledobject.yaml in this directory for full context on
+# kedacore/keda#8087 and the checklist to run through before uncommenting.
+#
+# When re-enabled, this needs a Gitea personal access token scoped to match
+# the ScaledObject's `scope:` — the same read:admin scope the old, removed
+# gitea-api-token secret used for the (broken) github-runner trigger. Restore
+# the gitea-api-token minting block in job-bootstrap-tokens.yaml (see git
+# history) before uncommenting the block below.
+#
+# apiVersion: keda.sh/v1alpha1
+# kind: TriggerAuthentication
+# metadata:
+#   name: gitea-keda-auth
+#   labels:
+#     app.kubernetes.io/name: gitea-runner
+#     app.kubernetes.io/part-of: ci-runners
+# spec:
+#   secretTargetRef:
+#     - parameter: personalAccessToken
+#       name: gitea-api-token
+#       key: token

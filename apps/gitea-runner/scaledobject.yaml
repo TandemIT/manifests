@@ -1,50 +1,101 @@
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: gitea-runner
-  labels:
-    app.kubernetes.io/name: gitea-runner
-    app.kubernetes.io/part-of: ci-runners
-  annotations:
-    # Wave 1: sync only after the runner-token-bootstrap Job (wave 0) has
-    # minted the KEDA API token.
-    argocd.argoproj.io/sync-wave: "1"
-spec:
-  scaleTargetRef:
-    name: gitea-runner
-  minReplicaCount: 5
-  maxReplicaCount: 10
-  pollingInterval: 15
-  cooldownPeriod: 120
-  # Hold at 5 replicas if the Gitea API is unreachable for 3 consecutive polls.
-  # UNVERIFIED, LIKELY BROKEN: runnerScope's value below ("global") is not
-  # accepted by KEDA's github-runner scaler — confirmed against both the
-  # current docs (keda.sh/docs/2.20/scalers/github-runner/) and the actual
-  # source (kedacore/keda pkg/scalers/github_runner_scaler.go), which only
-  # accept org/ent/repo; an unrecognized runnerScope returns a hard error on
-  # every poll. Because minReplicaCount (5) equals fallback.replicas (5), a
-  # scaler erroring on every poll is indistinguishable from a healthy idle
-  # one — this may mean the burst-to-10 path has never actually engaged.
-  # This is NOT a simple "pick the right org/ent/repo value" fix: none of
-  # those three describes Gitea's instance-wide "whole instance" runner
-  # token (apps/gitea-runner/job-bootstrap-tokens.yaml) either, which is
-  # presumably why KEDA didn't extend this scaler's enum for it. Instead
-  # KEDA ships a separate `forgejo-runner` trigger type (merged upstream,
-  # github.com/kedacore/keda PR #6495) built for Forgejo/Gitea's own API
-  # shape, and a dedicated `gitea-runner` trigger is in progress (PR #8087,
-  # open as of this comment). The real fix is switching `type:` below once
-  # one of those is confirmed to work against this Gitea instance, not
-  # editing runnerScope. Check `kubectl logs -n keda deploy/keda-operator`
-  # for a "runnerScope global not supported" error to confirm this is live.
-  fallback:
-    failureThreshold: 3
-    replicas: 5
-  triggers:
-    - type: github-runner
-      metadata:
-        githubApiURL: https://git.open-ict.hu/api/v1
-        runnerScope: global
-        labels: ubuntu-latest,ubuntu-24.04,ubuntu-22.04
-        noDefaultLabels: "true"
-      authenticationRef:
-        name: gitea-keda-auth
+# PREPARED FOR FUTURE USE — EVERYTHING BELOW IS COMMENTED OUT, NOT ACTIVE.
+# Not listed in kustomization.yaml; it has zero effect on the live cluster.
+#
+# This is a placeholder for KEDA's native Gitea Actions runner scaler,
+# currently kedacore/keda PR #8087 ("General: Introduce new Gitea Runner
+# Scaler" — https://github.com/kedacore/keda/pull/8087), opened 2026-08-24.
+# As of this writing (2026-09) that PR is:
+#   - UNMERGED, targeting `main`, one commit, zero human maintainer reviews
+#     — only an automated Copilot review flagging unresolved correctness
+#     concerns in pagination, label-matching, and scope validation
+#   - not in any released KEDA version — this cluster runs KEDA v2.15.1
+#     (apps/keda/kustomization.yaml), which predates this PR by definition
+#   - silent on scale-to-zero / runner-deregistration reconciliation, which
+#     is the actual hard problem with autoscaling Gitea runners
+#   - the sibling `forgejo-runner` scaler took ~8 months of active
+#     maintainer review to merge (kedacore/keda#6495); a separate
+#     Gitea-adjacent PR (#6765) sat 15 months and was closed stale, unmerged
+#
+# This platform previously ran a ScaledObject using KEDA's `github-runner`
+# trigger pointed at Gitea's GitHub-compatible API. It was removed (not just
+# disabled) because it was actively broken: `runnerScope: global` is not a
+# value that trigger accepts (its source only allows org/ent/repo), so it
+# returned a hard error on every poll, invisibly, because the configured
+# fallback replica count equaled the floor. See git history / README's
+# "Runner Autoscaling" section for the full account. That trigger is not
+# revivable for this use case — Gitea's instance-wide runner token has no
+# org/ent/repo equivalent — which is exactly why a dedicated `gitea-runner`
+# trigger type exists as a separate KEDA proposal instead of an extension of
+# `github-runner`.
+#
+# The field names below are a best-effort reconstruction of PR #8087's
+# current (pre-review) implementation, confirmed via direct research against
+# the PR as of 2026-09 — NOT a documented/stable API. KEDA reviewers
+# routinely force config-shape changes before merge, and this PR has had
+# none yet. Treat every field name here as unconfirmed.
+#
+# DO NOT uncomment this file until ALL of the following are true:
+#   1. kedacore/keda#8087 has merged.
+#   2. It has shipped in a released KEDA version.
+#   3. apps/keda/kustomization.yaml has been bumped to that version.
+#   4. The field names below have been checked against the *released*
+#      https://keda.sh/docs/<version>/scalers/gitea-runner/ page and fixed
+#      up if they've changed (very likely for at least the metadata keys).
+#   5. The gitea-api-token minting block (removed from
+#      apps/gitea-runner/job-bootstrap-tokens.yaml in the same change that
+#      created this file — see git history) has been restored, scoped to
+#      match whichever `scope:` is used below.
+#   6. The NetworkPolicy ingress rule allowing the `keda` namespace to reach
+#      Gitea on port 3000 (removed from apps/gitea/networkpolicy.yaml in the
+#      same change) has been restored.
+#   7. apps/gitea-runner/kustomization.yaml has scaledobject.yaml and
+#      triggerauthentication.yaml added back to its resources list.
+#   8. apps/gitea-runner/deployment.yaml's `replicas: 5` comment/behavior is
+#      revisited — once this is live, KEDA owns replica count again.
+#
+# What's already NOT blocking this, confirmed by direct research: Gitea's
+# `/api/v1/admin/actions/jobs` endpoint (and the org/repo/user equivalents)
+# already exist and are documented in Gitea's 1.26.4+ API docs — absent as
+# of 1.24. Our pinned Gitea (1.27.3) already has it. The Gitea-side API is
+# not the blocker; the unmerged KEDA-side scaler is.
+#
+# apiVersion: keda.sh/v1alpha1
+# kind: ScaledObject
+# metadata:
+#   name: gitea-runner
+#   labels:
+#     app.kubernetes.io/name: gitea-runner
+#     app.kubernetes.io/part-of: ci-runners
+#   annotations:
+#     # Wave 1: sync only after the runner-token-bootstrap Job (wave 0) has
+#     # minted the KEDA API token (item 5 above).
+#     argocd.argoproj.io/sync-wave: "1"
+# spec:
+#   scaleTargetRef:
+#     name: gitea-runner
+#   minReplicaCount: 5
+#   maxReplicaCount: 10
+#   pollingInterval: 15
+#   cooldownPeriod: 120
+#   # Hold at 5 replicas if the Gitea API is unreachable for 3 consecutive polls.
+#   fallback:
+#     failureThreshold: 3
+#     replicas: 5
+#   triggers:
+#     - type: gitea-runner  # UNCONFIRMED trigger name — verify against released docs
+#       metadata:
+#         # UNCONFIRMED field name — PR #8087 builds every request from a
+#         # configurable base URL rather than hardcoding Gitea's SaaS host.
+#         giteaApiURL: https://git.open-ict.hu
+#         # UNCONFIRMED field name/value. PR #8087 describes scope priority
+#         # repo > org > global/admin > user; this instance has no single
+#         # org or repo to scope to (an instance-wide runner), so this
+#         # should map to whatever the merged PR calls its admin/global
+#         # scope — confirm the exact value before uncommenting.
+#         scope: admin
+#         labels: ubuntu-latest,ubuntu-24.04,ubuntu-22.04
+#         # UNCONFIRMED field name — desired jobs-per-replica threshold;
+#         # PR #8087's default is 1.
+#         targetJobs: "1"
+#       authenticationRef:
+#         name: gitea-keda-auth

@@ -21,7 +21,7 @@
 - [Component Stack](#component-stack)
 - [Design Decisions](#design-decisions)
 - [Network Policy & Security](#network-policy--security)
-- [CI/CD Autoscaling](#cicd-autoscaling)
+- [CI/CD Runners](#cicd-runners)
 - [Deployment](#deployment)
 - [Repository Structure](#repository-structure)
 
@@ -95,10 +95,9 @@ The shell scripts only cover what a GitOps controller cannot do: node bootstrap,
   └──────────────────────────────────────────────────────────────────────┘
 
   ┌──────────────────────────────────────────────────────────────────────┐
-  │  CI/CD Autoscaling (KEDA)                                            │
+  │  CI/CD Runners                                                       │
   │                                                                      │
-  │  Gitea Job Queue ──► KEDA ScaledObject ──► Act Runner pods          │
-  │  (poll every 15s)      min=2 / max=10      (dind sidecar)           │
+  │  Act Runner pods — fixed replicas (5), dind sidecar, no autoscaler   │
   └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -151,7 +150,7 @@ Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded 
 
 | Component                 | Version | Namespace        | Purpose                                                        |
 | -------------------------- | ------- | ---------------- | --------------------------------------------------------------- |
-| KEDA                       | v2.15.1 | `keda`           | Event-driven pod autoscaling                                    |
+| KEDA                       | v2.15.1 | `keda`           | Installed, currently unused (see [CI/CD Runners](#cicd-runners)) |
 | kured                      | v1.15.0 | `kube-system`    | Automated rolling node reboot (weekdays 02:00–05:00)            |
 | system-upgrade-controller  | v0.20.1 | `system-upgrade` | Automated K3s binary upgrades (weekdays 05:30–07:00)            |
 | sealed-secrets             | v2.17.4 | `kube-system`    | Encrypts secrets so they're safe to commit to git                |
@@ -160,7 +159,7 @@ Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded 
 | Gitea                      | 1.27.3  | `gitea`          | Self-hosted Git service with Actions support                    |
 | PostgreSQL HA              | chart 16.3.2 ⚠ | `gitea`   | HA database for Gitea — PDB and existingSecret from chart       |
 | Valkey Cluster             | chart   | `gitea`          | Distributed cache and session store — PDB from chart default    |
-| Act Runner                 | 3.5.0   | `gitea-runners`  | Gitea Actions CI/CD executor (gitea/runner, formerly act_runner), ResourceQuota-capped |
+| Act Runner                 | 3.5.0   | `gitea-runners`  | Gitea Actions CI/CD executor (gitea/runner, formerly act_runner), fixed 5 replicas, ResourceQuota-capped |
 | Garage                     | v1.0.0  | `garage`         | Self-hosted S3-compatible object storage for Gitea + backups    |
 | Anubis                     | v1.27.0 | `anubis`         | Bot-challenge reverse proxy in front of Gitea (`apps/anubis/`)  |
 
@@ -326,16 +325,17 @@ terraform {
 
 Use a private-visibility owner (user or org) for `{owner}` — Gitea's package permission model follows repo/org visibility, and this is not anonymous-safe on a public one.
 
-**Backup gap**: like the rest of the Garage-backed Gitea storage above, state data is **not** covered by either backup CronJob below — `cronjob-backup-postgresql.yaml` only dumps the Postgres database (package/state *metadata*, not the state file content), and `cronjob-backup-gitea-data.yaml` only tars the Gitea PVC, not the Garage `gitea-storage` bucket. This is an existing, pre-dating gap (also true for LFS/Packages/Actions artifacts), not something introduced by moving Terraform state here — flagged, not fixed, as part of this change.
+**Backup coverage**: state data is included in `cronjob-backup-garage-storage.yaml`'s mirror of the whole `gitea-storage` bucket (same coverage as LFS/Packages/Actions artifacts) — see [Backups](#backups).
 
 ### Backups
 
-`apps/gitea/cronjob-backup-postgresql.yaml` and `apps/gitea/cronjob-backup-gitea-data.yaml` run daily, dumping/tarring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
+`apps/gitea/cronjob-backup-postgresql.yaml`, `apps/gitea/cronjob-backup-gitea-data.yaml`, and `apps/gitea/cronjob-backup-garage-storage.yaml` run daily, dumping/tarring/mirroring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
 
 - **PostgreSQL**: `pg_dump` against pgpool, gzipped, uploaded as `postgresql/gitea-<timestamp>.sql.gz`. 14-day retention, pruned by the same CronJob. Its `pg_dump` client image was switched this audit from `bitnamilegacy/postgresql:17` (Docker Hub's frozen "no longer updated" registry) to the actively-maintained Docker Official Image `postgres:17.11` — same major version as the actual server (17.6.0, below), pg_dump is compatible across patch releases of a major version.
 - **Gitea repository data**: tars the entire Gitea PVC (`tar -czf ... -C /data .` — everything the chart mounts at `/data`: bare git repository objects, the Bleve search indexer, SSH host keys, and any other on-disk app state; LFS/packages/actions-artifacts/attachments/avatars/repo-archives are *not* here — they're on Garage, see [Gitea Object Storage on Garage](#gitea-object-storage-on-garage)), mounted read-only and scheduled onto the same node as the Gitea pod since local-path is node-pinned, gzipped, uploaded as `gitea-data/gitea-data-<timestamp>.tar.gz`. Same 14-day retention.
+- **Garage-backed object storage**: mirrors the `gitea-storage` bucket (LFS, packages, actions artifacts/logs, attachments, avatars, repo-archives, Terraform state) to local scratch storage, tars it, and uploads it as `gitea-storage/gitea-storage-<timestamp>.tar.gz`. Same 14-day retention. This closes a gap that existed until this change: everything Gitea routes to Garage previously had no backup coverage at all.
 
-This is **replication ≠ backup**: PostgreSQL's streaming replication and Valkey's cluster replicas protect against a node dying, not against a bad migration, an accidental deletion, or logical corruption, which replicate to every copy just as faithfully as legitimate writes. Neither CronJob has been exercised as a restore yet — treat that as required before relying on either in an incident. Restore procedure:
+This is **replication ≠ backup**: PostgreSQL's streaming replication and Valkey's cluster replicas protect against a node dying, not against a bad migration, an accidental deletion, or logical corruption, which replicate to every copy just as faithfully as legitimate writes. None of the three CronJobs has been exercised as a restore yet — treat that as required before relying on any of them in an incident. Restore procedure:
 
 ```bash
 # PostgreSQL: download the latest dump, then restore into a scratch database first
@@ -362,19 +362,15 @@ The termination grace period is set to **3660 seconds** (one hour plus one minut
 
 ---
 
-### KEDA for Runner Autoscaling
+### Runner Autoscaling — disabled, fixed replicas instead
 
-The runner `Deployment` holds a **warm floor of 5 replicas**. KEDA's `github-runner` trigger is designed and documented against GitHub's own Actions API; its HTTP client builds every request from the configurable `githubApiURL` rather than hardcoding `api.github.com`, which is *why* pointing it at Gitea's Actions-compatible API (`apps/gitea-runner/scaledobject.yaml`) is plausible — but KEDA's own docs never mention Gitea, so treat that compatibility as unverified, not documented. Scaling is intended to work by queued job count:
+This platform previously ran a KEDA `ScaledObject` using the `github-runner` trigger against Gitea's Actions-compatible API, intended to scale the runner `Deployment` between a floor of 5 and a burst of 10 replicas by queued job count. It has been disabled.
 
-| Condition         | Replicas                                                     |
-| ----------------- | ------------------------------------------------------------ |
-| No jobs queued    | 5 (floor — also the fallback if the Gitea API is unreachable for 3 consecutive polls) |
-| Jobs queued       | 1 runner per queued job, up to 10                            |
-| Post-job cooldown | Scales back down to the floor after 120 seconds              |
+**Why**: `github-runner`'s `runnerScope` field only accepts `org`/`ent`/`repo` (confirmed against the scaler's source, `pkg/scalers/github_runner_scaler.go`) — none of which describes Gitea's instance-wide runner token, so the ScaledObject's `runnerScope: global` returned a hard error on every single poll. Because the configured `fallback.replicas` (5) equaled the floor (5), a scaler erroring on every poll was indistinguishable from a healthy idle one from the outside — the "burst to 10" path most likely never engaged even once. That trigger is not revivable for this use case — Gitea's instance-wide runner token has no org/ent/repo equivalent. KEDA has a purpose-built `forgejo-runner` trigger (merged, [kedacore/keda#6495](https://github.com/kedacore/keda/pull/6495)) — but it explicitly does not work against Gitea (calls an endpoint that 404s on Gitea) — and a dedicated `gitea-runner` trigger in progress ([kedacore/keda#8087](https://github.com/kedacore/keda/pull/8087), opened Aug 2026). As of this writing #8087 is unmerged, has had zero human maintainer review, and doesn't address runner deregistration on scale-down at all, so it isn't something to build on top of yet.
 
-**Known issue, not yet fixed**: the ScaledObject's `runnerScope: global` is not a value KEDA's `github-runner` scaler recognizes (its source only accepts `org`/`ent`/`repo`; an unrecognized scope returns a hard error on every poll). Because the fallback replica count (5) equals the floor (5), a scaler that has been erroring on every poll looks identical to a healthy idle one — this may mean the "up to 10" burst path has never actually engaged. This isn't a one-value fix, either: none of `org`/`ent`/`repo` maps cleanly onto Gitea's instance-wide runner token. KEDA's actual, current answer for Gitea/Forgejo is a **separate trigger type** — `forgejo-runner` (merged, [kedacore/keda#6495](https://github.com/kedacore/keda/pull/6495)) and a dedicated `gitea-runner` type (in progress, [kedacore/keda#8087](https://github.com/kedacore/keda/pull/8087)) — not an extension of `github-runner`'s `runnerScope` enum. See the comment in `apps/gitea-runner/scaledobject.yaml` for how to confirm this is actually failing on the live cluster and what to switch to.
+**Current state**: `apps/gitea-runner/deployment.yaml` runs a fixed `replicas: 5`. The old `ScaledObject`/`TriggerAuthentication` were not deleted — `apps/gitea-runner/scaledobject.yaml` and `triggerauthentication.yaml` now hold a fully commented-out, best-effort sketch of what a `gitea-runner`-trigger config would look like based on PR #8087's current implementation, plus an explicit checklist of everything that needs verifying/restoring (KEDA version bump, exact field names, the token-minting block, a NetworkPolicy rule) before uncommenting. Neither file is wired into `kustomization.yaml`, so they have zero effect today. KEDA itself (`apps/keda/`) is still installed but has no consumer today.
 
-A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/resourcequota.yaml`) caps the worst case so a burst toward 10 replicas cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
+A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/resourcequota.yaml`) still caps the fixed 5 replicas' worst-case resource usage so they cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
 
 ---
 
@@ -388,7 +384,6 @@ All namespaces with application workloads have explicit `NetworkPolicy` resource
 | --------- | ---------------------------------- | -------- | ---------------------------------------------------- |
 | Ingress   | `traefik` namespace                | 3000, 2222 | HTTP and SSH from ingress controller                |
 | Ingress   | `gitea-runners` namespace          | 3000     | Runner API calls                                      |
-| Ingress   | `keda` namespace                   | 3000     | KEDA job-queue polling                                |
 | Ingress   | `anubis` namespace (anubis pod)    | 3000     | Open Graph metadata fetch (`OG_PASSTHROUGH`)          |
 | Egress    | `gitea` namespace (pgpool)         | 5432     | Database connections                                  |
 | Egress    | `gitea` namespace (valkey)         | 6379     | Cache and session store                               |
@@ -408,31 +403,23 @@ The dind sidecar is the only privileged workload and is unavoidable for Docker-i
 
 ---
 
-## CI/CD Autoscaling
+## CI/CD Runners
 
 ```
-  Gitea Actions job pushed
+  Fixed Deployment, replicas: 5
           │
-          ▼
-  KEDA polls Gitea API (every 15s)
-  GET /api/v1/repos/.../actions/runners?status=queued
-          │
-          ▼
-  ScaledObject computes desired replicas
-  (1 runner per queued job, 0–10 range)
-          │
-          ▼
-  Kubernetes scales the runner Deployment
-          │
-  Each new pod:
-    init → register with Gitea API (gets runner token)
+  Each pod:
+    init → register --ephemeral with Gitea API (gets a fresh runner identity)
     main → gitea-runner daemon picks up jobs
     dind → Docker daemon on 127.0.0.1:2375
           │
-  On scale-down (SIGTERM):
-    gitea-runner drains current job (up to 3660s grace period)
-    init → deregister from Gitea API
+  On pod termination (SIGTERM):
+    gitea-runner drains its current job (up to 3660s grace period)
+    ephemeral registration means the identity is not reused — no
+    deregistration call needed, and no stale runner rows accumulate
 ```
+
+No autoscaler — see [Runner Autoscaling — removed, fixed replicas instead](#runner-autoscaling--removed-fixed-replicas-instead) for why.
 
 Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
 
@@ -511,7 +498,6 @@ Generated once by `scripts/01-bootstrap-first-master.sh` (Argo CD syncs manifest
 | `garage-rpc`                        | `garage`        | Garage cluster RPC secret                       |
 | `anubis-key`                        | `anubis`        | Anubis ED25519 signing key                      |
 | `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
-| `gitea-api-token`                   | `gitea-runners` | Gitea API token for KEDA scaler (placeholder)   |
 
 Each of these can be captured into git as a `SealedSecret` by `scripts/06-seal-secrets.sh` (same mechanism as `gitea-admin`) — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 

@@ -19,9 +19,13 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create"]
+  # "gitea-api-token" was also listed here for the KEDA ScaledObject's
+  # TriggerAuthentication — commented out along with it, not deleted (see
+  # apps/gitea-runner/scaledobject.yaml, checklist item 5). Add it back to
+  # resourceNames below when re-enabling: ["gitea-runner-registration", "gitea-api-token"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["gitea-runner-registration", "gitea-api-token"]
+    resourceNames: ["gitea-runner-registration"]
     verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

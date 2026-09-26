@@ -15,8 +15,6 @@ resources:
   - configmap.yaml
   - service.yaml
   - deployment.yaml
-  - scaledobject.yaml
-  - triggerauthentication.yaml
   - networkpolicy.yaml
   - networkpolicy-metrics.yaml
   - resourcequota.yaml

@@ -32,13 +32,17 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: keda
-      ports:
-        - protocol: TCP
-          port: 3000
+    # Disabled along with the KEDA ScaledObject (apps/gitea-runner/
+    # scaledobject.yaml — commented out, not deleted; see its header comment
+    # for the full re-enablement checklist, this is item 6). Uncomment when
+    # that scaler is re-enabled — KEDA needs to reach Gitea to poll job status.
+    # - from:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: keda
+    #   ports:
+    #     - protocol: TCP
+    #       port: 3000
     # Anubis fetches Open Graph metadata via OG_PASSTHROUGH
     - from:
         - namespaceSelector:
