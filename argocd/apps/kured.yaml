@@ -1,5 +1,4 @@
-# kured - automated node reboots. Independent of everything else; wave 1
-# only so node maintenance is armed before the app stack lands.
+# Wave 1 only so node maintenance is armed before the app stack lands.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

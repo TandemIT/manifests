@@ -1,7 +1,5 @@
-# Since Argo CD 1.8 the built-in health check for the Application CRD is
-# disabled. The app-of-apps pattern relies on it: sync waves on the child
-# Applications only gate on each other when the root app can tell whether a
-# child Application is Healthy. This restores the upstream-documented check.
+# Restores the Application health check (removed in Argo CD 1.8). Without it
+# the root app cannot tell when a child is Healthy, so sync waves don't gate.
 apiVersion: v1
 kind: ConfigMap
 metadata:

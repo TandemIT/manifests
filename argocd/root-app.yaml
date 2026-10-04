@@ -1,7 +1,4 @@
-# Root of the app-of-apps: the only Application applied imperatively
-# (by scripts/01-bootstrap-first-master.sh). It syncs argocd/apps/, which
-# contains one Application per component — from that point on the entire
-# cluster state is driven by git.
+# App-of-apps root: the only Application applied by hand (scripts/01).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

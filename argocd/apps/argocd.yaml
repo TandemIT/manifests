@@ -1,6 +1,4 @@
-# Argo CD manages its own installation from git after the initial
-# script-driven install. Bump the version in argocd/install/kustomization.yaml
-# and Argo CD upgrades itself on the next sync.
+# Argo CD manages itself after scripts/01 installs it.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

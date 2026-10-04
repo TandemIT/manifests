@@ -1,8 +1,5 @@
-# cert-manager from the official jetstack chart — multi-source app: the chart
-# from the jetstack repo, values + namespace from this repo. Upgrading is a
-# targetRevision bump here + commit. The ClusterIssuers live in a separate
-# wave-3 Application because they require the cert-manager CRDs to be
-# established and the webhook to be serving.
+# Chart from jetstack, values + namespace from this repo. The ClusterIssuers
+# are a separate wave-3 app: they need the CRDs and webhook to be up first.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

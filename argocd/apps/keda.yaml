@@ -1,6 +1,5 @@
-# KEDA operator - wave 1 so its CRDs exist before the gitea-runner
-# Application (wave 7). Currently has no consumer: the runner ScaledObject
-# is PENDING (commented out, see apps/gitea-runner/scaledobject.yaml).
+# Wave 1 so its CRDs exist before gitea-runner. No consumer yet: see
+# apps/gitea-runner/scaledobject.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -1,7 +1,4 @@
-# Gitea infrastructure owned by kustomize (apps/gitea/kustomization.yaml):
-# namespace, bootstrap-Job RBAC, SSH route, middleware,
-# NetworkPolicies and backup CronJobs. The Gitea workload itself is the Helm
-# chart in the wave-6 "gitea" Application.
+# Everything in apps/gitea/ except the chart itself (the wave-6 "gitea" app).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

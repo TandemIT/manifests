@@ -1,7 +1,5 @@
-# Traefik from the official chart — multi-source app: the chart from the
-# traefik repo, values + namespace from this repo. The chart owns the
-# traefik.io CRDs, so they upgrade together with the release. Upgrading is a
-# targetRevision bump here + commit.
+# Chart from the traefik repo, values + namespace from this repo. The chart
+# owns the traefik.io CRDs, so they upgrade with the release.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -16,8 +14,7 @@ spec:
   sources:
     - repoURL: https://traefik.github.io/charts
       chart: traefik
-      # Chart 34.4.1 ships Traefik v3.3.4; the app version is also pinned
-      # separately via image.tag in values.yaml.
+      # The app version is pinned separately (image.tag in values.yaml).
       targetRevision: 34.4.1
       helm:
         releaseName: traefik

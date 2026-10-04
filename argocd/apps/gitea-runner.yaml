@@ -1,10 +1,6 @@
-# Act Runner (fixed replica count — no autoscaler; see deployment.yaml for
-# why). The runtime registration token is minted against the live Gitea API
-# by the in-app runner-token-bootstrap Job (wave 0); the Deployment syncs at
-# wave 1, after a real token exists. App-level wave 7: after the "gitea"
-# Application (wave 6) so the Gitea API it registers against is already
-# being deployed (the Job itself still polls /api/healthz and waits, this
-# just avoids an unnecessary early race).
+# Wave 7, after gitea: the in-app token Job (wave 0) polls the Gitea API, and
+# the runner Deployment (wave 1) starts only once a real token exists.
+# Fixed replicas, no autoscaler: see apps/gitea-runner/scaledobject.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
