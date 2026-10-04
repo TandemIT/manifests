@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Common functions shared across deployment scripts. Source it with:
-#   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-functions.sh"
+# Shared helpers, sourced by scripts/0*.sh.
 
 set -euo pipefail
 
@@ -161,8 +160,7 @@ step_header() {
   log "Step ${step_num}: ${description}"
 }
 
-# No-op: no node prerequisites are currently needed. Kept as the hook that
-# scripts/01-03 call as step 1.
+# No-op hook that scripts/01-03 call as step 1.
 install_node_prerequisites() {
   return 0
 }

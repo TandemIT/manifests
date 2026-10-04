@@ -1,18 +1,7 @@
 #!/usr/bin/env bash
-# Bootstrap the first K3s control-plane node and hand the cluster to Argo CD.
-# Run as root on master1 only. Other nodes use 02-join-control-plane.sh / 03-join-worker.sh.
-#
-# This script does only what Argo CD cannot do for itself:
-#   1. Node prerequisites (currently a no-op) + kube-vip static pod (control-plane HA)
-#   2. K3s cluster init
-#   3. Network foundation (platform/): MetalLB + IP pool, CoreDNS override.
-#      Deliberately outside Argo CD so the cluster's addresses are in place
-#      and verifiable before GitOps starts, and so MetalLB can be tuned
-#      without self-heal reverting changes.
-#   4. Bootstrap secrets (random material that must never live in git)
-#   5. Argo CD installation + the root app-of-apps
-# Everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...) is
-# deployed by Argo CD from the argocd/apps/ Applications.
+# Bootstrap the first control plane and hand the cluster to Argo CD. Run as
+# root on that node only. Does what Argo CD can't: kube-vip, K3s init,
+# platform/, random secrets, Argo CD + root app. Idempotent.
 
 set -euo pipefail
 
@@ -21,10 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib-functions.sh"
 
 VIP="${VIP:-172.16.10.50}"
-# Fallback for a standalone run only — the deploy.sh/Ansible path always
-# passes K3S_VERSION from terraform/variables.tf's k3s_version (the real
-# source of truth; see terraform/main.tf's ansible_inventory). Keep this
-# default in sync with variables.tf's default by hand.
+# Standalone fallback (same in 02/03); deploy.sh passes k3s_version from
+# terraform/variables.tf. Keep the defaults in sync.
 K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
 
 MANIFESTS_DIR="${SCRIPT_DIR}/.."
@@ -66,10 +53,8 @@ until kubectl get nodes 2>/dev/null | grep -E "Ready\\s" | grep -v "NotReady" | 
 done
 log "Node is Ready"
 
-# Applied directly - not via Argo CD - so the VIPs the whole stack depends on
-# exist and can be verified before GitOps takes over. The first apply may fail
-# partially (IPAddressPool/L2Advertisement need MetalLB's validating webhook,
-# which isn't up yet); wait for the controller, then re-apply.
+# The first apply may fail partially: IPAddressPool/L2Advertisement need
+# MetalLB's webhook, which isn't up yet. Wait for it, then re-apply.
 step_header 5 "Deploying network foundation (platform/)"
 kubectl apply -k "${MANIFESTS_DIR}/platform" || \
   log "First pass incomplete (MetalLB webhook not ready) - re-applying after rollout"
@@ -77,17 +62,10 @@ kubectl rollout status deployment/controller -n metallb-system --timeout=180s
 kubectl apply -k "${MANIFESTS_DIR}/platform"
 log "MetalLB + CoreDNS override applied from platform/"
 
-# Argo CD can sync manifests but cannot invent secret material. Generated once
-# here and never overwritten; the runner/API tokens start as placeholders
-# because they can only be minted against a running Gitea — the
-# runner-token-bootstrap Job (apps/gitea-runner/job-bootstrap-tokens.yaml,
-# wave 0 of the gitea-runner Application) mints the registration token
-# automatically once Argo CD takes over. gitea-api-token stays a placeholder
-# while KEDA autoscaling is PENDING (see apps/gitea-runner/scaledobject.yaml).
-# None of these need to survive a rebuild: the PostgreSQL backups are
-# role-less pg_dumps that restore under fresh credentials, and the rest are
-# cluster-internal. The OIDC/LDAP credentials you choose yourself come from
-# terraform.tfvars via scripts/06-auth-providers.sh instead.
+# Created once, never overwritten. None need to survive a rebuild (backups
+# are --no-owner dumps). The runner tokens start as placeholders: the
+# runner-token-bootstrap Job replaces the registration token once Gitea is
+# up; gitea-api-token stays one while KEDA autoscaling is pending.
 step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
@@ -110,8 +88,7 @@ bootstrap_secret() {
 
 bootstrap_secret gitea-admin gitea \
   username=gitea-admin "password=$(openssl rand -hex 24)" email=admin@example.com
-# Key names are what the postgresql-ha chart's existingSecret expects
-# (apps/gitea/values.yaml).
+# Key names are what the postgresql-ha chart's existingSecret expects.
 bootstrap_secret postgresql-ha-credentials gitea \
   "postgres-password=$(openssl rand -hex 24)" "password=$(openssl rand -hex 24)" \
   "repmgr-password=$(openssl rand -hex 24)"
@@ -124,24 +101,12 @@ for secret in gitea-runner-registration gitea-api-token; do
 done
 
 step_header 7 "Installing Argo CD"
-# --server-side: the applicationsets.argoproj.io CRD's schema exceeds the
-# 262144-byte cap kubectl's client-side apply enforces on the
-# last-applied-configuration annotation.
-#
-# Expected to exit non-zero on every fresh cluster: argocd/install/ also
-# contains Argo CD's own self-ingress resources (certificate.yaml,
-# ingressroute.yaml, middleware.yaml, ip-allowlist.yaml), which need the
-# cert-manager.io/Certificate and traefik.io/IngressRoute/Middleware CRDs -
-# and those CRDs don't exist yet at this point (cert-manager/Traefik are
-# themselves Argo CD-managed Applications, synced later at wave 2). Verified
-# live (Docker Desktop test cluster, 2026-09-22): the core Argo CD
-# components install fine regardless, and the "argocd" self-management
-# Application (argocd/apps/argocd.yaml) picks up and successfully creates
-# the remaining self-ingress resources (4 files, 5 objects) on its own once
-# cert-manager/Traefik exist - no
-# manual step needed. `|| true` here only survives that one known, expected,
-# self-resolving partial failure; a real installation problem still shows up
-# in the rollout status waits right below.
+# --server-side: the ApplicationSet CRD exceeds client-side apply's 256 KiB
+# annotation limit.
+# `|| true`: on a fresh cluster the Certificate/IngressRoute/Middleware objects
+# in argocd/install/ fail (no cert-manager/Traefik CRDs until wave 2). The
+# "argocd" Application creates them later; real failures still surface in
+# the rollout waits below.
 apply_kustomization "${MANIFESTS_DIR}/argocd/install" --server-side --force-conflicts || true
 
 log "Waiting for Argo CD to be ready..."
@@ -174,8 +139,8 @@ echo "  UI:       kubectl port-forward svc/argocd-server -n argocd 8080:443"
 echo "  Login:    admin / ${ARGOCD_PASS}"
 echo "  Watch:    kubectl get applications -n argocd -w"
 echo ""
-echo "AFTER GITEA IS UP: no further manual step. Runner registration + KEDA API"
-echo "tokens mint automatically via the runner-token-bootstrap Job, and Garage"
+echo "AFTER GITEA IS UP: no further manual step. The runner registration token"
+echo "mints automatically via the runner-token-bootstrap Job, and Garage"
 echo "layout + S3 credentials for Gitea object storage/backups mint"
 echo "automatically via the garage-bootstrap Job."
 echo ""

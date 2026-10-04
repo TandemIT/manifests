@@ -23,8 +23,7 @@ chmod +x deploy.sh setup.sh 2>/dev/null || true
 
 echo -e "\n${GREEN}Checking prerequisites...${NC}"
 
-# OpenTofu preferred; an existing Terraform install works too (deploy.sh
-# auto-detects, tofu first). Installs OpenTofu if neither is present.
+# An existing Terraform works too (deploy.sh prefers tofu).
 if command -v tofu &> /dev/null; then
     echo -e "${GREEN}[ok] OpenTofu: $(tofu version | head -n1)${NC}"
 elif command -v terraform &> /dev/null; then
@@ -51,8 +50,7 @@ else
     sudo apt update && sudo apt install -y jq
 fi
 
-# kubectl: deploy.sh pushes the Gitea OIDC/LDAP secrets with it
-# (scripts/06-auth-providers.sh) and waits for Argo CD to converge.
+# deploy.sh needs kubectl for scripts/06 and the Argo CD wait.
 if command -v kubectl &> /dev/null; then
     echo -e "${GREEN}[ok] kubectl: $(kubectl version --client | head -n1)${NC}"
 else
@@ -72,7 +70,6 @@ else
     echo "     Generate one: ssh-keygen -t ed25519 -C 'k3s-cluster'"
 fi
 
-# Reachability check against the Proxmox host from terraform.tfvars
 PVE_HOST=$(sed -n 's|.*proxmox_api_url.*https://\([^:/"]*\).*|\1|p' terraform/terraform.tfvars | head -n1)
 if [ -n "${PVE_HOST}" ]; then
     echo -e "\n${GREEN}Testing Proxmox connectivity (${PVE_HOST})...${NC}"

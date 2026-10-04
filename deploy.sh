@@ -1,14 +1,6 @@
 #!/bin/bash
-# Zero-touch full bootstrap: Proxmox VMs (OpenTofu/Terraform) -> K3s +
-# platform + Argo CD (Ansible driving scripts/01..03) -> GitOps takes over.
-#
-# Prerequisites: terraform/terraform.tfvars filled in (see setup.sh),
-# TF_VAR_vm_password exported, local
-# commits PUSHED to the manifests repo (nodes and Argo CD pull from git),
-# and the VM template with qemu-guest-agent preinstalled.
-#
-# Fully non-interactive. Re-running is safe: the infra is declarative and
-# the bootstrap scripts are idempotent.
+# Full bootstrap: VMs (tofu) -> K3s + platform + Argo CD (Ansible running
+# scripts/01..03) -> GitOps. Steps and prerequisites: README.md. Safe to re-run.
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -30,15 +22,14 @@ if [ ! -f "terraform/terraform.tfvars" ]; then
     exit 1
 fi
 
-# The VM password is kept out of terraform.tfvars on purpose.
+# Kept out of terraform.tfvars on purpose.
 if [ -z "${TF_VAR_vm_password:-}" ]; then
     echo -e "${RED}Error: TF_VAR_vm_password is not set!${NC}"
     echo "export TF_VAR_vm_password='<at least 12 chars>' (cloud-init user's password on every VM)"
     exit 1
 fi
 
-# OpenTofu preferred, Terraform as fallback; override with TF_BIN=... if both
-# are installed and you need a specific one (e.g. destroying pre-tofu state).
+# TF_BIN=... picks one when both are installed (e.g. for pre-tofu state).
 TF_BIN="${TF_BIN:-$(command -v tofu || command -v terraform || true)}"
 if [ -z "${TF_BIN}" ]; then
     echo -e "${RED}Error: neither tofu nor terraform found. Run ./setup.sh first.${NC}"
@@ -46,8 +37,7 @@ if [ -z "${TF_BIN}" ]; then
 fi
 echo -e "Using IaC binary: ${GREEN}${TF_BIN}${NC}"
 
-# Needed after Ansible to push the Gitea OIDC/LDAP secrets - checked up
-# front so a missing binary does not stop the run halfway.
+# Checked up front so a missing kubectl doesn't stop the run halfway.
 if ! command -v kubectl &> /dev/null; then
     echo -e "${RED}Error: kubectl not found. Run ./setup.sh first.${NC}"
     exit 1
@@ -89,7 +79,7 @@ for NODE_IP in "${ALL_NODE_IPS[@]}"; do
     echo "SSH OK: ${NODE_IP}"
 done
 
-step "Step 3: Installing system utilities (qemu-guest-agent, micro)"
+step "Step 3: Installing system utilities (qemu-guest-agent, micro, unattended-upgrades)"
 ansible-playbook -i ansible/inventory.yml ansible/system-utils-install.yml
 
 step "Step 4: Installing K3s cluster + platform + Argo CD"
@@ -98,15 +88,13 @@ ansible-playbook -i ansible/inventory.yml ansible/k3s-install.yml
 KUBECONFIG="$(pwd)/kubeconfig"
 export KUBECONFIG
 
-# OIDC/LDAP credentials live only in terraform.tfvars; Gitea (wave 6) waits
-# on these secrets, so they go in while Argo CD works through earlier waves.
+# Gitea (wave 6) needs these Secrets; push them while earlier waves sync.
 step "Step 5: Pushing Gitea login providers from terraform.tfvars"
 TF_BIN="${TF_BIN}" bash scripts/06-auth-providers.sh
 
 step "Step 6: Waiting for Argo CD to converge (up to 20 min)"
 deadline=$((SECONDS + 1200))
 while :; do
-    # Healthy when every Application reports Synced+Healthy (root app included).
     total=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
     ready=$(kubectl get applications -n argocd --no-headers 2>/dev/null | awk '$2=="Synced" && $3=="Healthy"' | wc -l)
     if [ "${total}" -gt 1 ] && [ "${ready}" -eq "${total}" ]; then

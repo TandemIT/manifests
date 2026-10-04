@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/lib-functions.sh"
 
 VIP="${VIP:-172.16.10.50}"
 K3S_TOKEN="${K3S_TOKEN:?K3S_TOKEN is required. Get it from master1: cat /var/lib/rancher/k3s/server/node-token}"
-# Fallback for a standalone run only — see scripts/01-bootstrap-first-master.sh.
+# Standalone fallback, see scripts/01.
 K3S_VERSION="${K3S_VERSION:-v1.32.3+k3s1}"
 
 require_root
@@ -20,8 +20,7 @@ step_header 1 "Installing node prerequisites"
 install_node_prerequisites
 
 step_header 2 "Joining K3s cluster as worker via ${VIP}:6443"
-# Workers install as K3s agents; --disable flags are server-only.
-# ServiceLB is disabled cluster-wide by the server nodes (01/02 scripts).
+# Agents take no --disable flags; the servers (01/02) disable ServiceLB.
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
   K3S_URL="https://${VIP}:6443" \

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Reset application-layer resources: deletes the namespaces cert-manager,
-# traefik, anubis, gitea, gitea-runners and garage plus Traefik/cert-manager
-# cluster-scoped leftovers. It does not touch Argo CD or its Applications,
-# so a running Argo CD (automated sync + selfHeal) recreates everything.
+# Deletes the cert-manager, traefik, anubis, gitea, gitea-runners and garage
+# namespaces (PVCs included) plus Traefik/cert-manager cluster-scoped leftovers.
+# Argo CD and its Applications are untouched, so Argo CD recreates the apps,
+# but this also deletes the bootstrap secrets (scripts/01) and the OIDC/LDAP
+# provider secrets (scripts/06). Afterwards, re-run scripts/01 on the first
+# control plane (it recreates missing secrets) and scripts/06.
 
 set -euo pipefail
 

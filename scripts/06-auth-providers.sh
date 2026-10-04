@@ -1,22 +1,10 @@
 #!/usr/bin/env bash
-# Push Gitea's OIDC/LDAP login providers from terraform.tfvars into the
-# cluster. Run from the deploy host (deploy.sh calls it after Ansible);
-# re-run after changing gitea_oidc_providers / gitea_ldap_providers.
-#
-# For each provider it:
-#   1. applies the credentials as a plain Secret in the gitea namespace
-#      (gitea-oidc-<slug>: key/secret, gitea-ldap-<slug>: bindDn/bindPassword
-#      — the key names the Gitea chart's existingSecret expects)
-#   2. deletes secrets of providers no longer in terraform.tfvars
-#   3. regenerates apps/gitea/values-oidc.yaml / values-ldap.yaml, the
-#      non-secret half (names, URLs, filters) that Argo CD reads from git
-#
-# The credentials never touch git: terraform.tfvars (gitignored) is their
-# only source. Every other secret is random and generated in-cluster by
-# scripts/01-bootstrap-first-master.sh.
-#
-# Requirements: kubectl (with cluster access), python3, tofu or terraform
-# (override with TF_BIN=).
+# Push Gitea's OIDC/LDAP providers from terraform.tfvars (their only copy)
+# into the cluster: one Secret per provider in gitea (key names the chart's
+# existingSecret expects), deletes Secrets of removed providers, and
+# regenerates the non-secret apps/gitea/values-oidc.yaml / values-ldap.yaml.
+# deploy.sh runs it; re-run after editing the providers.
+# Needs kubectl, python3, tofu or terraform (TF_BIN=).
 
 set -euo pipefail
 
