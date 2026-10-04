@@ -1,663 +1,122 @@
-# Open ICT — Self-Hosted GitOps Platform
+# Open ICT - self-hosted Git platform on K3s
 
-> A production-ready, fully self-hosted Git service and CI/CD platform built on a 6-node K3s cluster.
-> Infrastructure-as-code all the way down — every component declared, versioned, and reproducible.
-
-[![K3s](https://img.shields.io/badge/K3s-v1.32.3-blue?logo=kubernetes)](https://k3s.io)
-[![Traefik](https://img.shields.io/badge/Traefik-v3.3.4-blue?logo=traefikproxy)](https://traefik.io)
-[![MetalLB](https://img.shields.io/badge/MetalLB-v0.14.9-orange)](https://metallb.universe.tf)
-[![Gitea](https://img.shields.io/badge/Gitea-1.27.3-green?logo=gitea)](https://gitea.io)
-[![cert-manager](https://img.shields.io/badge/cert--manager-v1.15.3-blue)](https://cert-manager.io)
-[![KEDA](https://img.shields.io/badge/KEDA-v2.15.1-purple)](https://keda.sh)
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Cluster Topology](#cluster-topology)
-- [IP Addressing](#ip-addressing)
-- [Component Stack](#component-stack)
-- [Design Decisions](#design-decisions)
-- [Network Policy & Security](#network-policy--security)
-- [CI/CD Runners](#cicd-runners)
-- [Deployment](#deployment)
-- [Repository Structure](#repository-structure--contents)
-
----
-
-## Overview
-
-This repository contains all Kubernetes manifests needed to deploy and operate a self-hosted GitOps platform. The platform is built on a **6-node K3s cluster** (3 control-plane + 3 workers) and provides:
-
-| Capability                 | Technology                             |
-| -------------------------- | -------------------------------------- |
-| Source control & Actions   | Gitea                                  |
-| CI/CD execution            | Act Runner (GitHub Actions-compatible) |
-| Autoscaling                | KEDA (installed; runner autoscaling pending upstream) |
-| Ingress + TCP routing      | Traefik v3                             |
-| TLS automation             | cert-manager + Let's Encrypt           |
-| Load balancing             | MetalLB (L2/ARP mode)                  |
-| Control-plane HA           | kube-vip (ARP)                         |
-| Automated node maintenance | kured                                  |
-
-Everything is managed through **Kustomize**, with **Helm** charts (via Argo CD) for Traefik, cert-manager and Gitea. The cluster is split into two ownership layers:
-
-- **Network foundation (`platform/`)** — kube-vip, MetalLB + IP pool, and the CoreDNS override. This layer defines the cluster's addresses and is applied imperatively by `scripts/01-bootstrap-first-master.sh` (`kubectl apply -k platform/`), *not* by Argo CD. That keeps it verifiable before GitOps starts and tunable without self-heal reverting changes; day-2 changes are a re-run of the same apply.
-- **Everything above it** — driven by **Argo CD** using the app-of-apps pattern: the bootstrap script installs Argo CD and applies the root Application (`argocd/root-app.yaml`); KEDA, kured, system-upgrade-controller, Traefik, cert-manager, Anubis, Gitea, runners, and Garage are reconciled from git via the Applications in `argocd/apps/`.
-
-The shell scripts only cover what a GitOps controller cannot do: node bootstrap, the network foundation, secret generation, and one-time runtime initialization (runner tokens, Garage layout).
-
----
+Gitea with Actions runners on a K3s cluster of Proxmox VMs, run GitOps-style:
+OpenTofu creates the VMs, Ansible runs the bootstrap scripts, and Argo CD
+reconciles everything else from this repository. Operational commands are in
+[COMMANDS.md](COMMANDS.md).
 
 ## Architecture
 
-```
-                        ┌─────────────────────────────────────────────────┐
-                        │                    LAN / Internet                │
-                        └───────────────────────┬─────────────────────────┘
-                                                 │
-                              ┌──────────────────▼──────────────────┐
-                              │    MetalLB VIP  145.89.192.138      │
-                              │    (L2/ARP — external public IP)    │
-                              └──────────────────┬──────────────────┘
-                                                 │
-                              ┌──────────────────▼──────────────────┐
-                              │           Traefik  (2 replicas)     │
-                              │   :80 (HTTP)  :443 (HTTPS)          │
-                              │   :2222 (TCP — Git SSH)             │
-                              └──────┬──────────────────┬───────────┘
-                                     │  HTTP(S)          │ TCP/SSH
-                          ┌──────────▼──────┐   ┌───────▼──────────┐
-                          │  IngressRoute   │   │ IngressRouteTCP  │
-                          │  git.open-ict.hu│   │  port 2222       │
-                          └──────────┬──────┘   └───────┬──────────┘
-                                     │                   │
-                          ┌──────────▼───────────────────▼──────────┐
-                          │                 Gitea (1 replica)        │
-                          │           rootless · port 3000/22        │
-                          └──────────┬──────────────────┬───────────┘
-                                     │                   │
-                       ┌─────────────▼──────┐ ┌─────────▼───────────────┐
-                       │  PostgreSQL HA      │ │  Valkey Cluster         │
-                       │  2 replicas        │ │  6 nodes (3M + 3R)      │
-                       │  + 2 pgpool        │ │  hard anti-affinity      │
-                       └────────────────────┘ └─────────────────────────┘
-
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │  Control Plane HA                                                    │
-  │                                                                      │
-  │  kube-vip VIP  172.16.10.50:6443  (ARP)                             │
-  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                          │
-  │  │ master1  │  │ master2  │  │ master3  │                           │
-  │  └──────────┘  └──────────┘  └──────────┘                          │
-  └──────────────────────────────────────────────────────────────────────┘
-
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │  CI/CD Runners                                                       │
-  │                                                                      │
-  │  Act Runner pods — fixed replicas (5), dind sidecar, no autoscaler   │
-  └──────────────────────────────────────────────────────────────────────┘
-```
-
-HTTP(S) for `git.open-ict.hu` is routed to Anubis (`apps/anubis/ingressroute.yaml`), which proxies to Gitea; only clients matching the route's `ClientIP()` bypass (`145.89.192.0/24`, `172.16.0.0/12`) go to Gitea directly.
-
----
-
-## Cluster Topology
-
-| Node      | Role          | Description                                                  |
-| --------- | ------------- | ------------------------------------------------------------ |
-| `master1` | Control Plane | Cluster init node, bootstraps kube-vip + platform components |
-| `master2` | Control Plane | Joins via VIP `172.16.10.50:6443`                            |
-| `master3` | Control Plane | Joins via VIP `172.16.10.50:6443`                            |
-| `worker1` | Worker        | Runs application workloads                                   |
-| `worker2` | Worker        | Runs application workloads                                   |
-| `worker3` | Worker        | Runs application workloads                                   |
-
-The three control-plane nodes provide **etcd quorum** — the cluster tolerates the loss of one control-plane node without interruption. kube-vip floats the API VIP across whichever control-plane node is the current leader.
-
----
-
-## IP Addressing
-
-| Address        | Role                         | Component |
-| -------------- | ---------------------------- | --------- |
-| `172.16.10.50`   | Control-plane VIP            | kube-vip  |
-| `145.89.192.138` | Application LoadBalancer VIP | MetalLB   |
-
-The control-plane VIP is announced via **ARP** (Layer 2) on the internal LAN (e.g. Proxmox virtual network); upstream routing is not required for `kubectl` access. The MetalLB VIP is a public IP bound directly to the node uplink, also announced via L2/ARP, so it is externally reachable without a separate NAT or port-forward hop.
-
-In-cluster resolution of `git.open-ict.hu` is handled by a **CoreDNS override** (`platform/coredns/coredns-custom.yaml`) that answers it with the MetalLB VIP cluster-wide, so cert-manager's HTTP-01 self-check works from inside the cluster without split-horizon DNS. The KEDA operator additionally carries a `hostAliases` entry for the same mapping (`apps/keda/operator-patch.yaml`).
-
----
-
-## Component Stack
-
-### Platform Layer (bootstrap-owned, outside Argo CD)
-
-Installed by `scripts/01-bootstrap-first-master.sh`: K3s and kube-vip on the node itself, then the network foundation from `platform/` via `kubectl apply -k`, then Argo CD. Manifests live in git and the apply is idempotent — declarative, just not continuously reconciled.
-
-| Component | Version      | Namespace        | Purpose                                    |
-| --------- | ------------ | ---------------- | ------------------------------------------ |
-| K3s       | v1.32.3+k3s1 | —                | Lightweight Kubernetes distribution        |
-| kube-vip  | v0.8.7       | `kube-system`    | Floating VIP for the Kubernetes API server |
-| MetalLB   | v0.14.9      | `metallb-system` | L2 load balancer for application services  |
-| Argo CD   | v3.4.4       | `argocd`         | GitOps controller — reconciles this repo   |
-
-### Application Layer (Argo CD-managed)
-
-Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded as sync waves — KEDA CRDs before the runner app (whose ScaledObject is pending), cert-manager CRDs before the issuers, Garage before Gitea (Gitea's pod references Garage-minted S3 credentials), Gitea before the runners. The network foundation (MetalLB VIP) already exists from bootstrap, so Traefik's LoadBalancer IP is available from the first sync. Runtime initialization (runner tokens, Garage layout) is handled entirely by in-cluster bootstrap Jobs — `apps/garage/job-bootstrap.yaml`, `apps/gitea-runner/job-bootstrap-tokens.yaml` — no separate script.
-
-| Component                 | Version | Namespace        | Purpose                                                        |
-| -------------------------- | ------- | ---------------- | --------------------------------------------------------------- |
-| KEDA                       | v2.15.1 | `keda`           | Installed, currently unused (see [CI/CD Runners](#cicd-runners)) |
-| kured                      | v1.15.0 | `kube-system`    | Automated rolling node reboot (weekdays 02:00–05:00)            |
-| system-upgrade-controller  | v0.20.1 | `system-upgrade` | Automated K3s binary upgrades (weekdays 05:30–07:00)            |
-| Traefik                    | v3.3.4  | `traefik`        | Ingress controller + TCP proxy — 2 replicas, PDB enabled        |
-| cert-manager               | v1.15.3 | `cert-manager`   | Automated TLS certificates via Let's Encrypt                    |
-| Gitea                      | 1.27.3  | `gitea`          | Self-hosted Git service with Actions support                    |
-| PostgreSQL HA              | chart 16.3.2 ⚠ | `gitea`   | HA database for Gitea — PDB and existingSecret from chart       |
-| Valkey Cluster             | chart 3.0.24 | `gitea`     | Distributed cache and session store — PDB from chart default    |
-| Act Runner                 | 3.5.0   | `gitea-runners`  | Gitea Actions CI/CD executor (gitea/runner, formerly act_runner), fixed 5 replicas, ResourceQuota-capped |
-| Garage                     | v1.0.0  | `garage`         | Self-hosted S3-compatible object storage for Gitea + backups    |
-| Anubis                     | v1.27.0 | `anubis`         | Bot-challenge reverse proxy in front of Gitea (`apps/anubis/`)  |
-
-**Anubis** is pinned to the exact `v1.27.0` release with `imagePullPolicy: IfNotPresent` (not a floating `:latest`, which only moves on non-pre-release tag pushes but still drifts across stable releases). Anubis runs a single replica with `store.backend: memory` (`apps/anubis/policy-configmap.yaml`) — confirmed correct against Anubis's own store interface, which documents in-memory as explicitly non-persistent and reserved for single-process use; `valkey`/`s3api` backends exist and are real if Anubis is ever scaled beyond one replica, but there's no such requirement today, so nothing was added.
-
-**Act Runner** uses `gitea/runner:3.5.0` — the project's current name (`gitea/act_runner` on Docker Hub is deprecated); the binary inside the image is `gitea-runner`, not `act_runner` (`apps/gitea-runner/deployment.yaml`).
-
-⚠ **PostgreSQL HA and Valkey Cluster images — a lower-urgency but real concern.** The `postgresql-ha` (`16.3.2`) and `valkey-cluster` (`3.0.24`) subcharts as configured by the Gitea chart do **not** use the paywalled `docker.io/bitnami/*` images. Verified by a live test deployment (Docker Desktop Kubernetes, 2026-09-22), the defaults are `docker.io/bitnamilegacy/postgresql-repmgr:17.6.0-debian-12-r2`, `docker.io/bitnamilegacy/pgpool:4.6.3-debian-12-r0`, and `docker.io/bitnamilegacy/valkey-cluster:8.1.3-debian-12-r3` — the `bitnamilegacy` org, not `bitnami`. All three were pulled and started successfully in that test, confirming they are currently free to pull, not paywalled.
-
-The real, remaining concern is narrower: `bitnamilegacy` is explicitly the **frozen** mirror Broadcom introduced when `bitnami/*` moved behind the Secure Images subscription — these exact tags still pull today, but they will not receive further updates or security patches, and there's no public commitment on how long Broadcom keeps frozen tags available. So this isn't "may fail to pull right now" (it doesn't); it's "pinned to an image line with no forward patch path, whose long-term availability isn't guaranteed." Worth a deliberate decision on the same timeline as any other stale-base-image concern, not an urgent/blocking one: mirror/cache the images this repo already successfully pulls, or migrate off Bitnami charts for one or both (e.g. CloudNativePG or Zalando's postgres-operator for Postgres; a non-Bitnami Valkey/Redis chart for cache) if `bitnamilegacy` is ever deprecated. Left unchanged pending that decision.
-
-Garage (`apps/garage/`, `argocd/apps/garage.yaml`) is a first-class platform service in its own right, not a Gitea subcomponent — it serves Gitea's object storage today and is free to gain other consumers later. See [Gitea Object Storage on Garage](#gitea-object-storage-on-garage).
-
----
-
-## Design Decisions
-
-### MetalLB over K3s ServiceLB
-
-K3s ships with its own `ServiceLB` (formerly Klipper), which satisfies `LoadBalancer` services by running a hostPort DaemonSet on every node. It is functional but has a critical limitation: it cannot guarantee a **stable, single IP address** across the cluster. Different nodes can advertise the service at their own node IPs, which creates ambiguity and breaks DNS-based routing.
-
-**MetalLB in L2 mode solves this cleanly:**
-
-- A single virtual IP (`145.89.192.138`) is announced via ARP.
-- The speaker pod that wins leader election holds the VIP; if that node goes down, a new speaker takes over and announces the VIP within seconds.
-- Traefik's `LoadBalancer` service always resolves to one predictable IP, which is what DNS records and Let's Encrypt HTTP-01 challenges depend on.
-
-K3s is launched with `--disable servicelb` to remove the conflict.
-
----
-
-### kube-vip for Control-Plane HA
-
-kube-vip runs as a **static pod** on each control-plane node (rendered into `/var/lib/rancher/k3s/agent/pod-manifests/` before K3s starts). It uses Kubernetes lease-based leader election (`plndr-cp-lock`) and announces the VIP `172.16.10.50` via ARP from whichever control-plane node holds the lease.
-
-This is kept completely separate from MetalLB by design:
-
-- kube-vip is responsible for **API server access** only — it never touches application traffic.
-- MetalLB is responsible for **application LoadBalancer services** only.
-
-Mixing the two responsibilities into one tool would make troubleshooting harder and couple the availability of `kubectl` access to the availability of your application IP pool.
-
----
-
-### Automatic OS Updates (unattended-upgrades + Kured)
-
-`ansible/system-utils-install.yml` installs and configures `unattended-upgrades` on every node (control-plane and worker alike — nothing here needs them to differ). Security updates and normal package updates — including the kernel — are applied automatically; `ansible/templates/50unattended-upgrades.j2` allowlists the `-security` and `-updates` origins.
-
-Reboots are deliberately **not** unattended-upgrades' job. `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-WithUsers` are explicitly set to `false` (not left at whatever the packaged default happens to be), so a kernel update only leaves the standard `/var/run/reboot-required` sentinel behind. Kured (`apps/kured/`) already watches exactly that file — it bind-mounts the host's `/var/run` at `/sentinel` and points `--reboot-sentinel` at `/sentinel/reboot-required` — and reboots one node at a time inside its own maintenance window (weekdays 02:00–05:00). The flow is:
-
-```
-apt security/normal updates (unattended-upgrades)
-        ↓
-kernel/library update leaves /var/run/reboot-required
-        ↓
-Kured sees the sentinel, cordons + drains, reboots — one node at a time, only inside its window
-```
-
-One scheduler decides *what* to install; one scheduler decides *when* to reboot. Neither can reboot on its own outside that split.
-
----
-
-### Traefik for SSH TCP Routing (Port 2222)
-
-Gitea supports Git-over-SSH. Rather than exposing an additional LoadBalancer service (which would consume a second IP from the MetalLB pool), SSH traffic is routed through Traefik via a dedicated **TCP entrypoint on port 2222**.
-
-The `IngressRouteTCP` resource in `apps/gitea/ingressroute-tcp.yaml` matches all traffic on that entrypoint using `HostSNI('*')` (TCP passthrough — no TLS inspection) and forwards it to the Gitea SSH service. From the user's perspective, their Git remote is simply `ssh://git.open-ict.hu:2222`.
-
-This keeps the entire platform reachable through a single IP address.
-
----
-
-### Traefik Non-Root Binding (Ports 8000/8443 vs 80/443)
-
-Linux restricts binding to ports below 1024 to processes running as root. Traefik runs as UID `65532` (non-root). Rather than granting the `NET_BIND_SERVICE` capability, Traefik listens on high ports (`8000`, `8443`, `2222`) internally. The `LoadBalancer` service maps the standard external ports (`80`, `443`, `2222`) to these high internal ports via `targetPort`. No capabilities needed, no root required.
-
----
-
-### Traefik `externalTrafficPolicy: Local` (real client source IPs)
-
-MetalLB runs in L2 mode (`platform/metallb/`). With the Kubernetes default `externalTrafficPolicy: Cluster`, a packet that MetalLB's speaker announces on one node can be forwarded by kube-proxy to a Traefik pod on a *different* node — and that hop SNATs the packet, replacing the real client address with a node IP. Traefik's Service (`apps/traefik/values.yaml`) sets `externalTrafficPolicy: Local` instead, which keeps traffic on the node that received it and preserves the true client source IP. This is what makes IP-based access control meaningful anywhere in the cluster — the `ClientIP()` match in `apps/anubis/ingressroute.yaml` and the `rfc1918-allowlist` Middleware in `argocd/install/` both depend on it; without `Local`, both would frequently see a node address instead of the real caller.
-
----
-
-### Argo CD Ingress + Network Restriction
-
-Argo CD is reachable at `argo.git.open-ict.hu`, using the same Traefik + cert-manager pattern as every other app (`argocd/install/certificate.yaml`, `ingressroute.yaml`, `middleware.yaml`): a `Certificate` issued by `letsencrypt-prod`, terminated at Traefik. `argocd/install/argocd-cmd-params-cm-patch.yaml` sets `server.insecure: "true"` so `argocd-server` serves plain HTTP internally instead of its own self-signed TLS — the standard Argo CD pattern for ingress controllers that terminate TLS themselves rather than passing it through.
-
-Access is additionally restricted by the `rfc1918-allowlist` Middleware (`argocd/install/ip-allowlist.yaml`), which allows all of `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16` and denies everything else. This is intentionally the entire private address space, not a specific VPN subnet — the VPN this will eventually be scoped to is still being built. That file is the single place these CIDRs are declared; when the VPN CIDR is final, replace the three ranges there and nothing else needs to change. Authentication is unchanged: the bootstrap-generated `argocd-initial-admin-secret` password (see [Secrets](#secrets-never-committed)) is still the only credential.
-
----
-
-### PostgreSQL HA over a Single Instance
-
-Gitea's data lives in PostgreSQL. A single-instance database is a hard availability boundary — if the pod restarts or the node is drained for maintenance, Gitea becomes unavailable until it recovers.
-
-The PostgreSQL HA chart deploys:
-
-- **2 PostgreSQL replicas** — one primary, one hot standby with streaming replication.
-- **2 pgpool replicas** — connection pool and query router. pgpool handles failover promotion transparently; Gitea only ever connects to pgpool, never directly to a Postgres pod.
-
-This means a PostgreSQL primary failure causes a brief pause while pgpool promotes the standby, after which Gitea automatically reconnects — rather than a full outage until a pod is rescheduled.
-
-**Credentials**: `postgresql-ha.global.postgresql.existingSecret` / `...pgpool.existingSecret` in `apps/gitea/values.yaml` point at `postgresql-ha-credentials` and `postgresql-ha-pgpool-credentials` — generated per cluster by `scripts/01-bootstrap-first-master.sh` (see [Secrets](#secrets-never-committed)) — rather than the chart's own published default passwords.
-
-**Drain protection**: both `postgresql-ha.postgresql.pdb` and `postgresql-ha.pgpool.pdb` default to `create: true` in the chart itself (`maxUnavailable: 1` each) and are not overridden here, so a PodDisruptionBudget already exists for both without needing to be declared in this repo's values.
-
-**Quorum**: with exactly 2 PostgreSQL replicas, a *network partition* between them (not a clean node death, which repmgr handles via promotion) has no arbiter. The chart supports a dedicated `witness` node for this; adding one is an open operator decision — not implemented, since it's a real resource-cost tradeoff this repo has not stated an intent on.
-
----
-
-### Valkey Cluster for Caching
-
-Valkey (a Redis-compatible fork) is deployed as a **6-node cluster**: 3 shards, each with a primary and a replica. All 6 pods have **hard pod anti-affinity** on `kubernetes.io/hostname`, meaning each must land on a different node.
-
-With 6 nodes in a 6-node cluster (3 CP + 3 workers), this guarantees:
-
-- No two Valkey pods share a node.
-- The cluster can survive the loss of one shard's primary and still serve cache traffic from the remaining 4 nodes.
-- A full node failure only takes down one shard, not the entire cache.
-
-This is deliberately over-provisioned for a platform of this scale — the goal is to demonstrate cluster-aware placement and HA patterns.
-
-**No password (`usePassword: false`)** is the Gitea chart's own explicit default for this deployment mode, not an oversight — Valkey's isolation instead depends entirely on `apps/gitea/networkpolicy-valkey.yaml` restricting access to Gitea pods only. Do not treat this as safe to copy elsewhere without the same NetworkPolicy in place.
-
-A PodDisruptionBudget (`maxUnavailable: 1` across all 6 pods) also comes from the `valkey-cluster` chart's own default (`pdb.create: true`), not from anything in this repo.
-
----
-
-### Storage: local-path, its limits, and what moved to Garage
-
-Every PVC in this cluster (Gitea, PostgreSQL, Valkey, Garage itself) is bound by K3s's default `local-path` provisioner — there is no other StorageClass in this repo. That means each PV is pinned by `nodeAffinity` to the node it was first created on (a pod cannot move with its data to another node), has no online expansion (raising a chart's `size:` does not resize an existing PVC), and has no storage-level replication or snapshotting of its own.
-
-This is accepted as-is rather than "fixed" with an unproven CSI addition: PostgreSQL and Valkey compensate at the application layer (independent replicas on independent disks, not a shared volume), and Gitea's LFS/Packages/Actions-artifact growth — the data most likely to outgrow a fixed-size local PVC — now goes to Garage instead (below). A real fix for the underlying limitation (a replicated/CSI-backed StorageClass) is a separate infrastructure migration this repo does not have evidence to justify yet, and is not something `size:` bumps or new manifests here can substitute for.
-
-### Gitea Object Storage on Garage
-
-Gitea's `[storage]` app.ini section (`apps/gitea/values.yaml` → `gitea.config.storage`) points LFS, Packages, Actions artifacts/logs, attachments, avatars and repo-archive at Garage (`apps/garage/` — shared platform storage) — each of those derives from `[storage]` automatically unless it sets its own `STORAGE_TYPE` (none do). **Git repository data itself is not part of this and stays on the PVC** — Gitea has no S3 backend for raw repository storage.
-
-The Garage bootstrap Job (`apps/garage/job-bootstrap.yaml`) mints a `gitea-storage` bucket and key, and writes the resulting credentials as `garage-gitea-storage-credentials` in the `gitea` namespace (cross-namespace RBAC in `apps/gitea/rbac-garage-bootstrap.yaml`, same pattern as `apps/gitea/rbac-runner-bootstrap.yaml`). Gitea consumes them via `gitea.additionalConfigFromEnvs` (`GITEA__STORAGE__MINIO_*` env vars from a `secretKeyRef`), never as plaintext in `gitea.config`.
-
-**This does not migrate existing data.** Any LFS objects, packages, or artifacts already written to the PVC before this was configured stay there; only new writes go to Garage. A one-time migration (copying `data/lfs`, `data/packages`, etc. into the new bucket and confirming Gitea reads them back) is a separate, deliberate operation — not performed automatically by this config change.
-
-### Terraform/OpenTofu State
-
-Gitea 1.27.3 has a native Terraform State Registry (`backend "http"`, confirmed against the pinned version's actual source — not assumed from current docs): state upload/fetch, versioning by serial number, and locking (`POST`/`DELETE` on a `/lock` sub-route) are all built in, gated by the same `gitea.config.packages.ENABLED` flag already set above — no extra Gitea config, and no separate Garage bucket, since state data flows through the same `[storage]` → `gitea-storage` bucket as LFS/Packages.
-
-No Terraform/OpenTofu workflow in this repo currently uses it — this repo's own cluster-provisioning `terraform/` uses local state, and no other backend configuration exists anywhere. If a future Gitea Actions workflow needs remote state, it authenticates with a Gitea personal access token (`write:package` scope) stored as a Gitea Actions secret, not a long-lived S3 credential:
-
-```hcl
-terraform {
-  backend "http" {
-    address        = "http://gitea-http.gitea.svc.cluster.local:3000/api/packages/{owner}/terraform/state/{name}"
-    lock_address   = "http://gitea-http.gitea.svc.cluster.local:3000/api/packages/{owner}/terraform/state/{name}/lock"
-    unlock_address = "http://gitea-http.gitea.svc.cluster.local:3000/api/packages/{owner}/terraform/state/{name}/lock"
-    lock_method    = "POST"
-    unlock_method  = "DELETE"
-    username       = "{gitea-username}"
-    password       = "{personal-access-token}"
-  }
-}
-```
-
-Use a private-visibility owner (user or org) for `{owner}` — Gitea's package permission model follows repo/org visibility, and this is not anonymous-safe on a public one.
-
-**Backup coverage**: state data is included in `cronjob-backup-garage-storage.yaml`'s mirror of the whole `gitea-storage` bucket (same coverage as LFS/Packages/Actions artifacts) — see [Backups](#backups).
-
-### Backups
-
-`apps/gitea/cronjob-backup-garage-storage.yaml` (00:00), `apps/gitea/cronjob-backup-gitea-data.yaml` (01:00), and `apps/gitea/cronjob-backup-postgresql.yaml` (01:30) run daily — cluster-local time, before kured's 02:00 window — dumping/tarring/mirroring to a dedicated Garage `platform-backups` bucket (credentials: `garage-backups-credentials`, minted the same way as the Gitea storage credentials above):
-
-- **PostgreSQL**: `pg_dump` against pgpool, gzipped, uploaded as `postgresql/gitea-<timestamp>.sql.gz`. 14-day retention, pruned by the same CronJob. The `pg_dump` client is the actively-maintained Docker Official Image `postgres:17.11` (not the frozen `bitnamilegacy/*` line) — same major version as the server (17.6.0, above); pg_dump is compatible across patch releases of a major version. ⚠ `apps/gitea/networkpolicy-postgresql.yaml` currently admits only Gitea pods to pgpool, so this CronJob's connection is not allowed by the NetworkPolicies as written.
-- **Gitea repository data**: tars the entire Gitea PVC (`tar -czf ... -C /data .` — everything the chart mounts at `/data`: bare git repository objects, the Bleve search indexer, SSH host keys, and any other on-disk app state; LFS/packages/actions-artifacts/attachments/avatars/repo-archives are *not* here — they're on Garage, see [Gitea Object Storage on Garage](#gitea-object-storage-on-garage)), mounted read-only and scheduled onto the same node as the Gitea pod since local-path is node-pinned, gzipped, uploaded as `gitea-data/gitea-data-<timestamp>.tar.gz`. Same 14-day retention.
-- **Garage-backed object storage**: mirrors the `gitea-storage` bucket (LFS, packages, actions artifacts/logs, attachments, avatars, repo-archives, Terraform state) to local scratch storage, tars it, and uploads it as `gitea-storage/gitea-storage-<timestamp>.tar.gz`. Same 14-day retention.
-
-This is **replication ≠ backup**: PostgreSQL's streaming replication and Valkey's cluster replicas protect against a node dying, not against a bad migration, an accidental deletion, or logical corruption, which replicate to every copy just as faithfully as legitimate writes. None of the three CronJobs has been exercised as a restore yet — treat that as required before relying on any of them in an incident. Restore procedure:
+- **Nodes:** 3 control-plane + 3 worker VMs by default (`terraform/variables.tf`). kube-vip announces the API VIP `172.16.10.50:6443` via ARP.
+- **Edge:** MetalLB (L2) gives Traefik the public IP `145.89.192.138` (ports 80, 443, 2222). `git.open-ict.hu` goes through Anubis to Gitea, except that clients in `145.89.192.0/24` and `172.16.0.0/12` bypass Anubis. SSH on 2222 goes straight to Gitea. `argo.git.open-ict.hu` is limited to RFC1918 sources.
+- **Gitea:** one replica, PostgreSQL HA (2 nodes + 2 pgpool), and a 6-pod Valkey cluster. LFS, packages, Actions artifacts, attachments, avatars and archives go to Garage (3-replica S3). Git repositories stay on Gitea's PVC.
+- **Runners:** a fixed 5-replica Deployment with a privileged dind sidecar. Each pod registers ephemerally on start and uses act_runner's default labels.
+- **Two layers:** `platform/` (MetalLB, the CoreDNS override, and the kube-vip static-pod template) is applied once by `scripts/01`, outside Argo CD. Everything else is an Argo CD Application in `argocd/apps/` (app-of-apps).
+- **Secrets:** none are in git. Random secrets are created by `scripts/01`. Runtime tokens (runner registration, Garage S3 keys) are minted by in-cluster bootstrap Jobs. OIDC/LDAP credentials come from `terraform/terraform.tfvars` through `scripts/06-auth-providers.sh`.
+- **Self-maintenance:** unattended-upgrades installs OS updates, and kured reboots one node at a time (Mon-Fri 02:00-05:00). system-upgrade-controller applies K3s patch releases on the pinned minor channel (Mon-Fri 05:30-07:00). Three backup CronJobs upload to Garage nightly.
+
+## Components
+
+| Component | Version | Pinned in |
+|---|---|---|
+| K3s | v1.32.3+k3s1 (then patch upgrades on the v1.32 channel) | `terraform/variables.tf`, `scripts/01..03`, `apps/system-upgrade-controller/` |
+| kube-vip | v0.8.7 | `platform/system/kube-vip.yaml` |
+| MetalLB | v0.14.9 | `platform/metallb/kustomization.yaml` |
+| Argo CD | v3.4.4 | `argocd/install/kustomization.yaml` |
+| KEDA | v2.15.1 (installed, no consumer yet) | `apps/keda/kustomization.yaml` |
+| kured | 1.15.0 | `apps/kured/kustomization.yaml` |
+| system-upgrade-controller | v0.20.1 | `apps/system-upgrade-controller/kustomization.yaml` |
+| Traefik | v3.3.4 (chart 34.4.1) | `argocd/apps/traefik.yaml`, `apps/traefik/values.yaml` |
+| cert-manager | v1.15.3 (chart) | `argocd/apps/cert-manager.yaml` |
+| Gitea | 1.27.3 (chart 12.7.0: postgresql-ha 16.3.2, valkey-cluster 3.0.24) | `argocd/apps/gitea.yaml`, `apps/gitea/values.yaml` |
+| Garage | v1.0.0 | `apps/garage/statefulset.yaml` |
+| Anubis | v1.27.0 | `apps/anubis/deployment.yaml` |
+| Gitea runner | 3.5.0 | `apps/gitea-runner/deployment.yaml` |
+
+## Prerequisites
+
+- A Proxmox API token and an Ubuntu cloud-image template with **qemu-guest-agent preinstalled**. Terraform waits for the agent.
+- A Debian/Ubuntu deploy host with an SSH key and `python3`. `setup.sh` installs OpenTofu, kubectl and jq if they're missing, and `deploy.sh` installs Ansible.
+- Free LAN addresses for the VIP (`172.16.10.50`) and the nodes (defaults `172.16.10.100-102` and `172.16.10.150-152`).
+- `145.89.192.138` routed to the node uplink, and DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` pointing at it.
+- Internet access from the nodes for images and Let's Encrypt HTTP-01.
+
+## Setup
+
+Nodes and Argo CD pull from GitHub (`TandemIT/manifests`, `master`), not from
+your checkout: **push before you deploy**.
+
+### Automated (Proxmox)
 
 ```bash
-# PostgreSQL: download the latest dump, then restore into a scratch database first
-aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
-  s3://platform-backups/postgresql/gitea-<timestamp>.sql.gz - | gunzip | \
-  psql -h <pgpool-service> -U postgres -d gitea_restore_test
-
-# Gitea data: download and inspect into a scratch path before ever touching the live PVC
-aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
-  s3://platform-backups/gitea-data/gitea-data-<timestamp>.tar.gz - | tar -tzv | head
+./setup.sh                        # checks/installs prerequisites, creates terraform/terraform.tfvars
+# edit terraform/terraform.tfvars, then push
+export TF_VAR_vm_password='...'   # cloud-init user password, min 12 chars; never in tfvars
+./deploy.sh
 ```
 
----
+`deploy.sh` is non-interactive and safe to re-run. In order, it:
 
-### Ephemeral Runner Registration
+1. Runs `tofu apply` (or `terraform` if tofu is missing; override with `TF_BIN=`). This creates the VMs and renders `ansible/inventory.yml`.
+2. Waits for SSH on every node.
+3. Runs `ansible/system-utils-install.yml`: qemu-guest-agent, micro, unattended-upgrades.
+4. Runs `ansible/k3s-install.yml`. It clones the repo to `/opt/manifests` on every node, runs `scripts/01` on the first control plane, `02` on the other control planes one at a time, and `03` on the workers. It then writes `./kubeconfig`, pointed at the VIP.
+5. Runs `scripts/06-auth-providers.sh` to push the OIDC/LDAP secrets.
+6. Waits up to 20 minutes for every Argo CD Application to be Synced and Healthy.
 
-Each Act Runner pod registers itself with Gitea on startup (`register --ephemeral` in an init container) using the shared registration token. This means:
+### Manual (any 6 Linux nodes)
 
-- Crashed or deleted pods do not leave zombie runner registrations behind in Gitea.
-- New pods are always registered with a fresh identity — no stale state from previous runs.
-- The runner registration token is minted via the Gitea API by the `runner-token-bootstrap` Job (`apps/gitea-runner/job-bootstrap-tokens.yaml`) and stored as a Kubernetes `Secret`; it is never committed to this repository.
-
-The termination grace period is set to **3660 seconds** (one hour plus one minute). This gives a running CI job a full hour to complete before the pod is force-killed during a rolling update or scale-down event.
-
----
-
-### Runner Autoscaling — pending upstream KEDA release, fixed replicas for now
-
-KEDA autoscaling for the runners is **pending** a KEDA release with a Gitea runner scaler. Until then the runner `Deployment` runs a fixed 5 replicas. (The earlier setup — a `ScaledObject` using KEDA's `github-runner` trigger against Gitea's Actions-compatible API, meant to scale between 5 and 10 replicas by queued job count — was disabled for the reason below.)
-
-**Why**: `github-runner`'s `runnerScope` field only accepts `org`/`ent`/`repo` (confirmed against the scaler's source, `pkg/scalers/github_runner_scaler.go`) — none of which describes Gitea's instance-wide runner token, so the ScaledObject's `runnerScope: global` returned a hard error on every single poll. Because the configured `fallback.replicas` (5) equaled the floor (5), a scaler erroring on every poll was indistinguishable from a healthy idle one from the outside — the "burst to 10" path most likely never engaged even once. That trigger is not revivable for this use case — Gitea's instance-wide runner token has no org/ent/repo equivalent. KEDA has a purpose-built `forgejo-runner` trigger (merged, [kedacore/keda#6495](https://github.com/kedacore/keda/pull/6495)) — but it explicitly does not work against Gitea (calls an endpoint that 404s on Gitea) — and a dedicated `gitea-runner` trigger in progress ([kedacore/keda#8087](https://github.com/kedacore/keda/pull/8087), opened Aug 2026). As of 2026-09-26 #8087 is unmerged, has had no human maintainer review, is not in any KEDA release (latest checked: v2.21.0), and doesn't address runner deregistration on scale-down, so it isn't something to build on top of yet.
-
-**Current state**: `apps/gitea-runner/deployment.yaml` runs a fixed `replicas: 5`. `apps/gitea-runner/scaledobject.yaml` and `triggerauthentication.yaml` hold a fully commented-out, best-effort `gitea-runner`-trigger config based on PR #8087, marked with `# PENDING:` headers, plus a checklist of everything to verify/enable before uncommenting (KEDA version bump, exact field names, the commented-out `gitea-api-token` minting block and RBAC entry, the commented-out `keda` NetworkPolicy rule in `apps/gitea/networkpolicy.yaml`). Neither file is in `kustomization.yaml`, so they have no effect today. KEDA itself (`apps/keda/`) is installed but has no consumer.
-
-A `ResourceQuota` in the `gitea-runners` namespace (`apps/gitea-runner/resourcequota.yaml`) still caps the fixed 5 replicas' worst-case resource usage so they cannot starve Postgres/Valkey/Traefik/Argo CD, which run on the same schedulable nodes.
-
----
-
-## Network Policy & Security
-
-NetworkPolicies select specific pods (Gitea, pgpool, PostgreSQL, Valkey, Garage, Anubis, the runners, two of the three backup CronJobs, cert-manager HTTP-01 solvers in `gitea`). A selected pod is denied all traffic of the policy's type(s) except what the rules allow. There is **no namespace-wide default-deny**: unselected pods (e.g. the `backup-garage-storage` CronJob, bootstrap Jobs) and the `traefik`, `cert-manager`, `keda`, `argocd` and `kube-system` namespaces are unrestricted.
-
-### Gitea allowed traffic
-
-| Direction | Peer                              | Ports    | Purpose                                              |
-| --------- | ---------------------------------- | -------- | ---------------------------------------------------- |
-| Ingress   | `traefik` namespace                | 3000, 2222 | HTTP and SSH from ingress controller                |
-| Ingress   | `gitea-runners` namespace (any pod) | 3000    | Runner API calls                                      |
-| Ingress   | `anubis` namespace (anubis pod)    | 3000     | Proxied browser traffic (Anubis `TARGET`) + Open Graph fetch (`OG_PASSTHROUGH`) |
-| Ingress   | `keda` namespace                   | 3000     | **Pending** (commented out) — KEDA runner scaler      |
-| Egress    | `gitea` namespace (pgpool)         | 5432     | Database connections                                  |
-| Egress    | `gitea` namespace (valkey)         | 6379     | Cache and session store                               |
-| Egress    | `garage` namespace (garage pods)   | 3900     | Object storage (`networkpolicy-garage.yaml`)          |
-| Egress    | `kube-system` (kube-dns)           | 53       | DNS                                                   |
-| Egress    | Any address                        | 443, 587 | HTTPS outbound + SMTP submission (STARTTLS) for notifications |
-
-### Pod security highlights
-
-| Component            | UID   | Read-only rootfs | Seccomp        | Capabilities                                            |
-| --------------------- | ----- | ----------------- | -------------- | -------------------------------------------------------- |
-| Traefik                | 65532 | Yes                | RuntimeDefault | drop ALL                                                  |
-| cert-manager           | 1000  | Yes                | RuntimeDefault | drop ALL                                                  |
-| Gitea                  | 1000  | Yes                | RuntimeDefault | drop ALL                                                  |
-| Act Runner (`runner`)  | 1000  | Yes                | RuntimeDefault | drop ALL                                                  |
-| dind sidecar           | root  | No                 | Unconfined     | `privileged: true` (full capability set — not scoped to just `SYS_ADMIN`) |
-
-The dind sidecar is the only privileged workload and is unavoidable for Docker-in-Docker CI execution. It is isolated to the `gitea-runners` namespace and cannot reach the Gitea or platform namespaces except through the allowed network policy rules (`apps/gitea-runner/networkpolicy.yaml` restricts the runner pod's egress — dind shares the pod — to Gitea pods on 3000, kube-dns, and any address on 443/80; `networkpolicy-metrics.yaml` limits ingress to TCP 9101 from a `monitoring` namespace).
-
----
-
-## CI/CD Runners
-
-```
-  Fixed Deployment, replicas: 5
-          │
-  Each pod:
-    init → register --ephemeral with Gitea API (gets a fresh runner identity)
-    main → gitea-runner daemon picks up jobs
-    dind → Docker daemon on 127.0.0.1:2375
-          │
-  On pod termination (SIGTERM):
-    gitea-runner drains its current job (up to 3660s grace period)
-    ephemeral registration means the identity is not reused — no
-    deregistration call needed, and no stale runner rows accumulate
-```
-
-No autoscaler yet — KEDA autoscaling is pending an upstream release; see [Runner Autoscaling](#runner-autoscaling--pending-upstream-keda-release-fixed-replicas-for-now).
-
-Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
-
----
-
-## Deployment
-
-> Full command reference is in [COMMANDS.md](COMMANDS.md).
-
-### Option A — Zero-touch full bootstrap (OpenTofu/Terraform + Ansible)
-
-Provisions the VMs on Proxmox and runs the entire bootstrap end-to-end from a deploy host, with no interactive steps:
+Clone the repo on every node, then run as root:
 
 ```bash
-./setup.sh     # one-time: prereq check (installs OpenTofu + kubectl if needed), creates terraform/terraform.tfvars
-# edit terraform/terraform.tfvars (Proxmox API token, template, network)
-git push       # nodes and Argo CD pull the manifests from git
-export TF_VAR_vm_password='...'   # VM console password (min 12 chars), deliberately not in tfvars
-./deploy.sh    # tofu/terraform → VMs → Ansible → scripts/01..03 → Argo CD converges
+sudo bash install.sh                                            # first control plane (runs scripts/01); prints the join token
+sudo K3S_TOKEN='<token>' bash scripts/02-join-control-plane.sh  # each other control plane, one at a time
+sudo K3S_TOKEN='<token>' bash scripts/03-join-worker.sh         # each worker
 ```
 
-`deploy.sh` is fully non-interactive and safe to re-run. It auto-detects the IaC binary (OpenTofu preferred, Terraform as fallback; override with `TF_BIN=`). The apply also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
+`VIP`, `K3S_VERSION` and `VIP_INTERFACE` (default: the default-route
+interface) can be overridden through the environment. Afterwards, run
+`bash scripts/06-auth-providers.sh` from a host that has the kubeconfig,
+`terraform/terraform.tfvars` and a `tofu -chdir=terraform init`.
 
-After Ansible, `deploy.sh` pushes the Gitea OIDC/LDAP credentials from `terraform.tfvars` into the cluster (`scripts/06-auth-providers.sh`) — they never touch git.
+### What happens next
 
-Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` → `145.89.192.138`.
+`scripts/01` installs K3s with `--cluster-init` (bundled Traefik and ServiceLB
+disabled). It then applies `platform/`, creates the bootstrap secrets,
+installs Argo CD, and applies `argocd/root-app.yaml`. Argo CD syncs
+`argocd/apps/` in waves:
 
-### Option B — Manual bootstrap (per-node scripts)
+| Wave | Applications |
+|---|---|
+| 0 | `argocd` (self-management) |
+| 1 | `keda`, `kured`, `system-upgrade-controller` |
+| 2 | `traefik`, `cert-manager` |
+| 3 | `cert-manager-issuers` |
+| 4 | `anubis`, `gitea-config` |
+| 5 | `garage`: its bootstrap Job mints the S3 credentials Gitea needs |
+| 6 | `gitea` |
+| 7 | `gitea-runner`: its bootstrap Job mints the registration token |
 
-#### Prerequisites
+## Repository layout
 
-- 6 Linux nodes reachable over SSH
-- LAN addresses free for the control-plane VIP (`172.16.10.50`) and the nodes (Terraform defaults: `172.16.10.100–102` control plane, `172.16.10.150–152` workers)
-- MetalLB pool address `145.89.192.138` routable to the node uplink (external public IP)
-- DNS records: `git.open-ict.hu` and `argo.git.open-ict.hu` → `145.89.192.138`
-- Internet access for pulling images and Let's Encrypt challenges
-
-#### Bootstrap order
-
-```bash
-# 1. Initialize the first control-plane node: K3s + kube-vip + network
-#    foundation (MetalLB, CoreDNS) + bootstrap secrets + Argo CD + root
-#    app-of-apps. From this point Argo CD deploys the application stack
-#    from git; the network layer is already up and verifiable.
-sudo bash scripts/01-bootstrap-first-master.sh
-
-# 2. Join the remaining control-plane nodes (run on master2, master3)
-sudo K3S_TOKEN='<token-from-step-1>' bash scripts/02-join-control-plane.sh
-
-# 3. Join worker nodes (run on worker1–3)
-sudo K3S_TOKEN='<token-from-step-1>' bash scripts/03-join-worker.sh
-
-# 4. From a host with kubectl access and terraform/terraform.tfvars: push the
-#    Gitea OIDC/LDAP credentials (see Secrets).
-bash scripts/06-auth-providers.sh
-
-# The runner registration token and Garage layout/credentials mint
-# automatically via in-cluster bootstrap Jobs once Gitea and Garage are up —
-# no further manual step on the GitOps path.
+```
+terraform/   Proxmox VMs + generated ansible/inventory.yml (OpenTofu, local state)
+ansible/     node utilities; drives scripts/01..03 (no install logic of its own)
+scripts/     01 bootstrap, 02/03 join, 05 reset apps, 06 auth providers, lib-functions.sh
+platform/    network foundation, applied by scripts/01 (not Argo CD)
+argocd/      install/ (Argo CD itself), root-app.yaml, apps/ (one Application per component)
+apps/        manifests and Helm values per component
 ```
 
-Watch Argo CD converge:
+## Known limitations
 
-```bash
-kubectl get applications -n argocd -w
-```
-
-Each script is idempotent. Re-running it will not duplicate resources. To tear down the application layer (it does not remove Argo CD or its Applications, so a running Argo CD recreates everything; `-f` skips the confirmation):
-
-```bash
-bash scripts/05-reset-apps.sh
-```
-
-### Secrets (never committed)
-
-No secret is stored in git, encrypted or otherwise. Argo CD syncs manifests but cannot invent secret material, so secrets come from two places outside it.
-
-**Random, generated once per cluster** by `scripts/01-bootstrap-first-master.sh` and never overwritten by a re-run. None of them need to survive a rebuild: the PostgreSQL backup is a role-less `pg_dump --no-owner`, so it restores under the new cluster's credentials, and the rest are cluster-internal or harmless to regenerate:
-
-| Secret                             | Namespace       | Contents                                        |
-| ----------------------------------- | --------------- | ----------------------------------------------- |
-| `gitea-admin`                       | `gitea`         | Gitea admin username + password                 |
-| `postgresql-ha-credentials`         | `gitea`         | PostgreSQL superuser, app-DB user, repmgr passwords |
-| `postgresql-ha-pgpool-credentials`  | `gitea`         | pgpool admin + health-check passwords           |
-| `garage-rpc`                        | `garage`        | Garage cluster RPC secret                       |
-| `anubis-key`                        | `anubis`        | Anubis ED25519 signing key                      |
-| `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
-| `gitea-api-token`                   | `gitea-runners` | KEDA API token (placeholder; stays one while KEDA autoscaling is pending) |
-
-**Chosen by you** in `terraform/terraform.tfvars` (gitignored): `gitea_oidc_providers` / `gitea_ldap_providers`. `scripts/06-auth-providers.sh` (run by `deploy.sh`) applies them as `gitea-oidc-<slug>` / `gitea-ldap-<slug>`, deletes those of removed providers, and regenerates the non-secret `apps/gitea/values-oidc.yaml` / `values-ldap.yaml` — commit those when it reports a change. `terraform.tfvars` is the only copy of these credentials (they are not written to Terraform state): back it up.
-
-See [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
-
-Minted automatically once Garage and Gitea are up, by the in-cluster bootstrap Jobs `apps/garage/job-bootstrap.yaml` and `apps/gitea-runner/job-bootstrap-tokens.yaml` — the latter replaces the `gitea-runner-registration` placeholder; the former adds:
-
-| Secret                             | Namespace  | Contents                                              |
-| ------------------------------------ | ---------- | ------------------------------------------------------ |
-| `garage-gitea-storage-credentials`  | `gitea`    | S3 access key for Gitea's LFS/packages/actions storage (also read by the Garage-storage backup) |
-| `garage-backups-credentials`        | `gitea`    | S3 access key for the three backup CronJobs' uploads    |
-
-Valkey runs without a password inside the cluster — an explicit upstream chart default for this deployment mode, not an oversight — and is isolated entirely by `apps/gitea/networkpolicy-valkey.yaml`.
-
----
-
-## Repository Structure & Contents
-
-This repository is organized to provide a clear separation between platform infrastructure, application workloads, and operational scripts. Below is an overview of the major directories and files at the root level, along with their purposes:
-
-### Root-Level Files
-
-- **setup.sh**: One-time prerequisite check for the full bootstrap (OpenTofu/Terraform, Ansible, jq present, tfvars created from the example).
-- **deploy.sh**: Zero-touch full bootstrap — OpenTofu/Terraform provisions the VMs, Ansible runs `scripts/01..03`, then waits for Argo CD to converge.
-- **install.sh**: Entry point for bootstrapping the first control-plane node manually. It runs `scripts/01-bootstrap-first-master.sh` (via `bash`) and should be run as root on the initial master node.
-- **COMMANDS.md**: Comprehensive command reference for all deployment and operational tasks.
-- **README.md**: This documentation file.
-
-### terraform/
-
-Provisions the VMs on Proxmox (Telmate provider, cloud-init clones of an Ubuntu template) and renders `ansible/inventory.yml` from the same variables, so addressing lives in one place (`terraform.tfvars`). Plain HCL — works with both OpenTofu and Terraform. State and tfvars are gitignored.
-
-An apply never rebuilds or reboots existing nodes on its own:
-
-- **Template, clone mode, VM ID and EFI disk** changes would make the provider destroy and recreate the VM — for every node at once. They are in `ignore_changes`, so they only apply to newly created nodes. Rebuild existing nodes deliberately, one at a time: drain, `tofu -chdir=terraform apply -replace='proxmox_vm_qemu.k3s_worker[0]'`, re-run the join, uncordon.
-- **Changes that need a reboot** (CPU, memory, ...) are applied as pending with a warning (`automatic_reboot = false`). Reboot the nodes one at a time: drain → reboot → uncordon.
-- **VM IDs**: control-plane nodes use `vm_id_start + i`, workers `vm_id_start + 100 + i`, so changing `control_plane_count` never touches a worker.
-- **Lowering a count** deletes the highest-numbered node without draining it — drain it first.
-
-### ansible/
-
-- **system-utils-install.yml**: qemu-guest-agent + base utilities on all nodes, plus `unattended-upgrades` (security and normal package updates, including the kernel, applied automatically — reboots are explicitly left to Kured; see [Automatic OS Updates](#automatic-os-updates-unattended-upgrades--kured)).
-- **k3s-install.yml**: Drives this repo's `scripts/01-bootstrap-first-master.sh` on the first control plane, `02-join-control-plane.sh` on the others (serially, for etcd), and `03-join-worker.sh` on the workers; then fetches a kubeconfig pointed at the VIP. It contains no installation logic of its own.
-- **inventory.yml**: Generated by Terraform — do not edit by hand.
-
-### scripts/
-
-Contains all automation scripts for cluster lifecycle management:
-
-- **01-bootstrap-first-master.sh**: Initializes the first control-plane node, applies the network foundation, generates bootstrap secrets, and installs Argo CD + the root app-of-apps. From here Argo CD deploys the entire application stack (Traefik, cert-manager, Gitea, etc.) from `argocd/apps/` — there is no separate "deploy apps" script.
-- **02-join-control-plane.sh**: Used to join additional control-plane nodes to the cluster.
-- **03-join-worker.sh**: Used to join worker nodes.
-- **05-reset-apps.sh**: Removes all application workloads from the cluster.
-- **06-auth-providers.sh**: Pushes the Gitea OIDC/LDAP credentials from `terraform.tfvars` into the cluster and regenerates their values files.
-- **lib-functions.sh**: Shared Bash functions used by other scripts.
-
-### argocd/
-
-The GitOps control layer — the only directory Argo CD needs to be pointed at once; everything else follows from it:
-
-- **install/**: Kustomization pinning the upstream Argo CD release manifest (plus the `argocd-cm` patch that restores the Application health check required for app-of-apps wave ordering). Applied once by `scripts/01-bootstrap-first-master.sh`; afterwards Argo CD manages its own installation from here.
-- **root-app.yaml**: The root Application (app-of-apps). Points at `argocd/apps/` — the single manifest the bootstrap script applies imperatively.
-- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `system-upgrade-controller` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `garage` (5 — its bootstrap Job mints the S3 credentials Gitea's pod spec references) → `gitea` (6, Helm chart with values from this repo) → `gitea-runner` (7). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
-
-### platform/
-
-The network foundation — everything that defines the cluster's addresses. Owned by the bootstrap scripts, **not** Argo CD: `scripts/01-bootstrap-first-master.sh` runs `kubectl apply -k platform/` before installing Argo CD, and day-2 changes are a re-run of the same command.
-
-- **metallb/**: MetalLB upstream manifest plus the L2 IP address pool and advertisement.
-- **coredns/**: CoreDNS override resolving `git.open-ict.hu` to the MetalLB VIP inside the cluster.
-- **system/kube-vip.yaml**: Static-pod template for control-plane HA — copied to each master's pod-manifests directory by the bootstrap/join scripts, never applied via the API server.
-
-### apps/
-
-Contains application-specific Kubernetes manifests and Kustomize overlays:
-
-- **keda/**: KEDA operator (upstream release manifest + host-alias patch pointing `git.open-ict.hu` at the MetalLB VIP).
-- **kured/**: upstream kured release manifest (DaemonSet, RBAC, sentinel hostPath mount) + a local patch for the reboot window only.
-- **system-upgrade-controller/**: upstream CRDs + controller for automated K3s upgrades, plus the local server/agent `Plan` resources.
-- **traefik/**: `namespace.yaml` + `values.yaml` only — the Traefik workload itself is the official Helm chart (`argocd/apps/traefik.yaml`). `kustomization.yaml` exists so Argo CD's Kustomize source-type detection applies only `namespace.yaml`, not `values.yaml` (a Helm values file, not a manifest) as a raw resource.
-- **cert-manager/**: Same pattern as `traefik/` — `namespace.yaml` + `values.yaml`, the cert-manager workload is the jetstack Helm chart. `issuers/` holds the Let's Encrypt `ClusterIssuer`s as a separate wave-3 Application (`argocd/apps/cert-manager-issuers.yaml`), synced after cert-manager's CRDs/webhook are ready.
-- **gitea/**: Self-hosted Git service. Contains: - `values.yaml`: Helm chart values for Gitea deployment (including the Garage-backed object storage and postgresql-ha credential wiring). - `cronjob-backup-*.yaml`: PostgreSQL, Gitea-data and Garage-storage backups to Garage. - `ingressroute-tcp.yaml`: Traefik TCP route for SSH (port 2222). - `middleware.yaml`: Rate limiting and HTTPS redirect policies. - `networkpolicy*.yaml`: Network isolation for Gitea, PostgreSQL, Valkey, Garage traffic and the cert-manager HTTP-01 solver.
-- **gitea-runner/**: CI/CD runner deployment — fixed-replica runner Deployment, token bootstrap Job, ResourceQuota, and NetworkPolicies; the KEDA ScaledObject/TriggerAuthentication are commented out (PENDING upstream KEDA release).
-- **garage/**: Self-hosted S3-compatible object storage — Gitea's LFS/packages/actions storage and the platform backup CronJobs' upload target. Independent application, own `garage` namespace.
-- **anubis/**: Bot-challenge reverse proxy sitting in front of Gitea (not an example/placeholder) — namespace, certificate, deployment (pinned image, see [Component Stack](#component-stack)), service, ingress, middleware, and network policies, plus its bot policy (`policy-configmap.yaml`).
-
-- **namespace.yaml**: Defines the Kubernetes namespace for the component.
-- **deployment.yaml**: Describes the Deployment resource for running pods.
-- **service.yaml**: Exposes the application internally or externally.
-- **ingressroute.yaml / ingressroute-tcp.yaml**: Traefik-specific routing for HTTP(S) and TCP (SSH) traffic.
-- **middleware.yaml**: Traefik middleware for rate limiting, redirects, etc.
-- **networkpolicy.yaml**: Enforces network segmentation and security.
-- **certificate.yaml**: Requests TLS certificates via cert-manager.
-- **policy-configmap.yaml**: Stores policy configuration for apps.
-- **kustomization.yaml**: Kustomize manifest for composing resources.
-- **values.yaml**: Helm values for templated deployments (Gitea).
-
-### Middleware
-
-Middleware resources are defined in `middleware.yaml` files found in various application directories (e.g., `apps/gitea/middleware.yaml`, `apps/anubis/middleware.yaml`, `argocd/install/middleware.yaml`). These files configure Traefik middleware components such as:
-
-- **Rate limiting**: Protects backend services from excessive requests.
-- **HTTPS redirection**: Ensures all HTTP traffic is redirected to HTTPS.
-- **IP allowlisting**: Restricts a route to specific source CIDRs (`argocd/install/ip-allowlist.yaml`).
-
-Each service can have its own middleware configuration, referenced by its IngressRoute or IngressRouteTCP resource. This modular approach allows for fine-grained traffic management and security policies per application.
-
----
-
-### Kustomize
-
-Kustomize is used only where it does real work; a directory that would otherwise contain only a `kustomization.yaml` listing local files is left as plain YAML instead (Argo CD's own source-type detection then treats it as a directory source). Verified by rendering every `kustomization.yaml` with `kubectl kustomize` (kubectl v1.36.1 / Kustomize v5.8.1).
-
-| Path | Why it's Kustomize |
-| --- | --- |
-| `apps/keda/`, `apps/kured/`, `apps/system-upgrade-controller/` | Upstream release manifest (remote URL resource) + a local strategic-merge patch. |
-| `argocd/install/` | Upstream Argo CD release manifest + `argocd-cm`/`argocd-cmd-params-cm` patches. |
-| `platform/metallb/` | Upstream release manifest + local `IPAddressPool`/`L2Advertisement`. |
-| `platform/` (top level) | Composes `metallb/` + `coredns/coredns-custom.yaml` into one `kubectl apply -k` unit for the bootstrap script. |
-| `apps/garage/`, `apps/gitea-runner/` | `namespace:` field injects `metadata.namespace` into resources that don't set it themselves (verified: their ServiceAccount/Role/RoleBinding/Job manifests carry no explicit namespace) — a genuine Kustomize transformation, not just an index. |
-| `apps/cert-manager/`, `apps/traefik/`, `apps/gitea/` (the `gitea-config` app) | The directory also holds a Helm `values.yaml` used via `ref:` from a multi-source Argo Application. `kustomization.yaml`'s `resources:` list is what stops Argo's directory-source detection from also trying to apply `values.yaml` as a raw manifest. |
-| `apps/cert-manager/issuers/` | `commonAnnotations` transformer. |
-
-Plain YAML (no `kustomization.yaml`): `apps/anubis/` — a pure resource list with no transformation, and no Helm values file to disambiguate away from.
-
-## Tools & Frameworks Used
-
-- **Kubernetes**: Container orchestration and workload management.
-- **Helm**: Traefik, cert-manager, Gitea (+ its `postgresql-ha`/`valkey-cluster` subcharts) — each a multi-source or chart-based Argo CD Application, values from this repo.
-- **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic. Its middleware system implements rate limiting, HTTPS redirection, and IP allowlisting (`argocd/install/ip-allowlist.yaml`).
-- **cert-manager**: Automated TLS certificate management with Let's Encrypt.
-- **MetalLB**: L2 load balancer for exposing services with stable IPs.
-- **KEDA**: Event-driven autoscaler; installed, runner autoscaling pending an upstream Gitea runner scaler.
-- **kube-vip**: Floating VIP for control-plane HA.
-- **kured**: Automated node reboots for security updates.
-
-### Traffic Management with Traefik Middleware
-
-All ingress traffic is routed through Traefik, which leverages its middleware system to enforce security and operational policies. Middleware components are attached to IngressRoute and IngressRouteTCP resources to provide:
-
-- **Rate limiting** to protect backend services from abuse
-- **Automatic HTTP to HTTPS redirection** for secure access
-- **IP allowlisting** to restrict a route to specific source CIDRs
-
-This approach ensures consistent, centralized traffic management across all applications and services deployed in the cluster.
-
----
-
-_Maintained by the Open ICT platform team — platform-ops@open-ict.hu_
+- Every PVC uses K3s `local-path`. Volumes are pinned to one node, can't be expanded in place, and aren't replicated at the storage level.
+- PostgreSQL HA has two nodes and no witness, so a network partition between them has no arbiter.
+- The PostgreSQL, pgpool and Valkey images are the chart defaults from `bitnamilegacy/*`, which is frozen and gets no security updates.
+- Valkey has no password. Only `apps/gitea/networkpolicy-valkey.yaml` isolates it.
+- NetworkPolicies select specific pods, and there is no namespace-wide default-deny.
+- No backup has been restore-tested. `backup-postgresql` is currently blocked by the pgpool NetworkPolicy, which admits only Gitea pods.
+- Objects written to the Gitea PVC before Garage storage was configured were not migrated.
+- Runner autoscaling is waiting on an upstream KEDA Gitea scaler (see `apps/gitea-runner/scaledobject.yaml`).
+- The Argo CD allowlist covers all of RFC1918 until the VPN CIDR is known (`argocd/install/ip-allowlist.yaml`).
+- Terraform state is local, and `terraform/terraform.tfvars` is the only copy of the OIDC/LDAP credentials. Back both up.
