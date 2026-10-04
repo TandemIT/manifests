@@ -50,6 +50,7 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   count = var.control_plane_count
 
   name        = "k3s-cp-${count.index + 1}"
+  tags        = "k3s;control-plane" # metadata only: never replaces or reboots
   target_node = var.proxmox_node
   clone       = var.template_id
   full_clone  = true
@@ -72,6 +73,8 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   boot = "order=virtio0"
 
   start_at_node_boot = true
+  # Explicit: left unset, rc10 shows a perpetual vm_state "running" -> null diff.
+  vm_state = "running"
 
   # Never reboot on apply: with count, every affected VM would reboot at the
   # same time (whole cluster down). Changes that need a reboot are applied as
@@ -154,6 +157,7 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   count = var.worker_count
 
   name        = "k3s-worker-${count.index + 1}"
+  tags        = "k3s;worker" # metadata only: never replaces or reboots
   target_node = var.proxmox_node
   clone       = var.template_id
   full_clone  = true
@@ -178,6 +182,8 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   boot = "order=virtio0"
 
   start_at_node_boot = true
+  # Explicit: left unset, rc10 shows a perpetual vm_state "running" -> null diff.
+  vm_state = "running"
 
   # Never reboot on apply: with count, every affected VM would reboot at the
   # same time (whole cluster down). Changes that need a reboot are applied as
