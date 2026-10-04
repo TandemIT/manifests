@@ -28,6 +28,15 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gitea
+  # The valkey-cluster subchart omits apiVersion/kind in volumeClaimTemplates;
+  # the API server adds them, so the StatefulSet never matches and selfHeal
+  # re-applies it every minute.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates[]?.apiVersion
+        - .spec.volumeClaimTemplates[]?.kind
   syncPolicy:
     automated:
       prune: true

@@ -35,6 +35,10 @@ providers:
   kubernetesCRD:
     enabled: true
     ingressClass: traefik
+    # apps/anubis/ingressroute.yaml (namespace anubis) routes to the Gitea
+    # service and rate-limit middleware in namespace gitea. Off by default;
+    # without it Traefik drops both git.open-ict.hu routes (404).
+    allowCrossNamespace: true
   kubernetesIngress:
     enabled: true
     ingressClass: traefik
