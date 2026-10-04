@@ -1,14 +1,14 @@
 terraform {
-  required_version = ">= 1.0"
+  required_version = ">= 1.6"
 
   required_providers {
     proxmox = {
       source  = "Telmate/proxmox"
-      version = "3.0.2-rc05"
+      version = "3.0.2-rc10"
     }
     local = {
       source  = "hashicorp/local"
-      version = "~> 2.5"
+      version = "~> 2.9"
     }
   }
 }
@@ -66,8 +66,10 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
     cores   = var.control_plane_cpu
     sockets = 1
   }
-  scsihw   = "virtio-scsi-pci"
-  bootdisk = "virtio0"
+  scsihw = "virtio-scsi-pci"
+  # Explicit: a clone otherwise inherits the template's boot order, which
+  # usually points at scsi0 rather than the virtio0 disk defined below.
+  boot = "order=virtio0"
 
   start_at_node_boot = true
 
@@ -115,7 +117,7 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   searchdomain = var.searchdomain
 
   ciuser     = "ubuntu"
-  cipassword = "ubuntu"
+  cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
   lifecycle {
@@ -147,8 +149,10 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     cores   = var.worker_cpu
     sockets = 1
   }
-  scsihw   = "virtio-scsi-pci"
-  bootdisk = "virtio0"
+  scsihw = "virtio-scsi-pci"
+  # Explicit: a clone otherwise inherits the template's boot order, which
+  # usually points at scsi0 rather than the virtio0 disk defined below.
+  boot = "order=virtio0"
 
   start_at_node_boot = true
 
@@ -196,7 +200,7 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   searchdomain = var.searchdomain
 
   ciuser     = "ubuntu"
-  cipassword = "ubuntu"
+  cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
   lifecycle {

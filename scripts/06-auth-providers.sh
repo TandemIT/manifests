@@ -36,14 +36,23 @@ require_binary kubectl python3
 [[ -n "${TF_BIN}" ]] || die "neither tofu nor terraform found"
 require_cluster
 
-tf_output() {
-  "${TF_BIN}" -chdir="${MANIFESTS_DIR}/terraform" output -json "$1" 2>/dev/null || echo "{}"
+# Evaluates the variable from the config + terraform.tfvars (not from state,
+# which only changes on apply), so a tfvars edit takes effect immediately.
+# base64 keeps the console's HCL string quoting out of the JSON. Any failure
+# aborts: an empty result here would delete every provider secret below.
+tf_var() {
+  local raw
+  raw="$(echo "base64encode(jsonencode(nonsensitive(var.$1)))" \
+    | "${TF_BIN}" -chdir="${MANIFESTS_DIR}/terraform" console -no-color)" \
+    || die "Could not read var.$1 (run '${TF_BIN##*/} -chdir=terraform init' first?)"
+  [[ "${raw}" =~ ^\"([A-Za-z0-9+/=]+)\"$ ]] || die "Unexpected console output for var.$1"
+  base64 -d <<<"${BASH_REMATCH[1]}"
 }
 
 step_header 1 "Reading providers from terraform.tfvars"
 export OIDC_JSON LDAP_JSON
-OIDC_JSON="$(tf_output gitea_oidc_providers)"
-LDAP_JSON="$(tf_output gitea_ldap_providers)"
+OIDC_JSON="$(tf_var gitea_oidc_providers)"
+LDAP_JSON="$(tf_var gitea_ldap_providers)"
 log "OIDC: $(python3 -c "import json,os; print(len(json.loads(os.environ['OIDC_JSON'])))") provider(s), LDAP: $(python3 -c "import json,os; print(len(json.loads(os.environ['LDAP_JSON'])))") provider(s)"
 
 step_header 2 "Applying provider secrets"

@@ -10,6 +10,8 @@ crash.log
 # .terraform.lock.hcl is deliberately NOT ignored - HashiCorp recommends
 # committing it so provider version/checksum changes go through code review:
 # https://developer.hashicorp.com/terraform/language/files/dependency-lock
+# It pins registry.opentofu.org (deploy.sh's default binary); refresh with
+# `tofu -chdir=terraform providers lock -platform=linux_amd64 ...`.
 
 # Ansible
 *.retry

@@ -441,6 +441,7 @@ Provisions the VMs on Proxmox and runs the entire bootstrap end-to-end from a de
 ./setup.sh     # one-time: prereq check (installs OpenTofu + kubectl if needed), creates terraform/terraform.tfvars
 # edit terraform/terraform.tfvars (Proxmox API token, template, network)
 git push       # nodes and Argo CD pull the manifests from git
+export TF_VAR_vm_password='...'   # VM console password (min 12 chars), deliberately not in tfvars
 ./deploy.sh    # tofu/terraform → VMs → Ansible → scripts/01..03 → Argo CD converges
 ```
 
@@ -512,7 +513,7 @@ No secret is stored in git, encrypted or otherwise. Argo CD syncs manifests but 
 | `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
 | `gitea-api-token`                   | `gitea-runners` | KEDA API token (placeholder; stays one while KEDA autoscaling is pending) |
 
-**Chosen by you** in `terraform/terraform.tfvars` (gitignored): `gitea_oidc_providers` / `gitea_ldap_providers`. `scripts/06-auth-providers.sh` (run by `deploy.sh`) applies them as `gitea-oidc-<slug>` / `gitea-ldap-<slug>`, deletes those of removed providers, and regenerates the non-secret `apps/gitea/values-oidc.yaml` / `values-ldap.yaml` — commit those when it reports a change. `terraform.tfvars` is the only copy of these credentials (Terraform state holds them too): back it up.
+**Chosen by you** in `terraform/terraform.tfvars` (gitignored): `gitea_oidc_providers` / `gitea_ldap_providers`. `scripts/06-auth-providers.sh` (run by `deploy.sh`) applies them as `gitea-oidc-<slug>` / `gitea-ldap-<slug>`, deletes those of removed providers, and regenerates the non-secret `apps/gitea/values-oidc.yaml` / `values-ldap.yaml` — commit those when it reports a change. `terraform.tfvars` is the only copy of these credentials (they are not written to Terraform state): back it up.
 
 See [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 

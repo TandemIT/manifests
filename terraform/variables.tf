@@ -22,6 +22,20 @@ variable "ssh_public_key" {
   default     = "YOUR_SSH_PUBLIC_KEY_HERE"
 }
 
+# Deliberately not in terraform.tfvars: export TF_VAR_vm_password before
+# running deploy.sh. Console/serial login password for the cloud-init user.
+variable "vm_password" {
+  description = "Password for the cloud-init user (ubuntu) on every VM - set via TF_VAR_vm_password"
+  type        = string
+  sensitive   = true
+  nullable    = false
+
+  validation {
+    condition     = length(var.vm_password) >= 12
+    error_message = "vm_password must be at least 12 characters."
+  }
+}
+
 variable "proxmox_node" {
   description = "Proxmox node name"
   type        = string
@@ -154,10 +168,10 @@ variable "manifests_revision" {
   default     = "master"
 }
 
-# Passthrough only - not used by any resource here. scripts/06-auth-providers.sh
-# reads it and pushes the credentials into the cluster as Secrets, so they
-# never touch git. Supports any number of providers. Create the OAuth2
-# provider/application for each one yourself (e.g. in Authentik, Keycloak,
+# Not used by any resource or output here (so it never lands in state).
+# scripts/06-auth-providers.sh reads it via `console` and pushes the
+# credentials into the cluster as Secrets, so they never touch git.
+# Supports any number of providers. Create the OAuth2 provider/application for each one yourself (e.g. in Authentik, Keycloak,
 # ...) and add an entry here, keyed by a short slug used in the secret name
 # and Gitea's callback URL (/user/oauth2/<slug>/callback). Leave empty ({})
 # to skip OIDC.
@@ -182,17 +196,17 @@ variable "gitea_ldap_providers" {
   description = "Gitea LDAP login providers, keyed by slug"
   type = map(object({
     display_name             = string
-    host                      = string
-    port                      = number
-    security_protocol         = optional(string, "LDAPS") # unencrypted | StartTLS | LDAPS
-    bind_dn                   = string
-    bind_password             = string
-    user_search_base          = string
-    user_filter               = string
-    admin_filter              = optional(string, "")
-    email_attribute           = optional(string, "mail")
-    username_attribute        = optional(string, "uid")
-    public_ssh_key_attribute  = optional(string, "")
+    host                     = string
+    port                     = number
+    security_protocol        = optional(string, "LDAPS") # unencrypted | StartTLS | LDAPS
+    bind_dn                  = string
+    bind_password            = string
+    user_search_base         = string
+    user_filter              = string
+    admin_filter             = optional(string, "")
+    email_attribute          = optional(string, "mail")
+    username_attribute       = optional(string, "uid")
+    public_ssh_key_attribute = optional(string, "")
   }))
   default   = {}
   sensitive = true

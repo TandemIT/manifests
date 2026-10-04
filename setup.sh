@@ -86,4 +86,5 @@ fi
 echo -e "\n${YELLOW}Next steps:${NC}"
 echo "1. Edit terraform/terraform.tfvars (API token secret, template, network)"
 echo "2. Push any local manifest changes (nodes + Argo CD pull from git)"
-echo "3. Run: ./deploy.sh"
+echo "3. export TF_VAR_vm_password='...' (VM console password, min 12 chars)"
+echo "4. Run: ./deploy.sh"

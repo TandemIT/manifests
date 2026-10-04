@@ -2,7 +2,8 @@
 # Zero-touch full bootstrap: Proxmox VMs (OpenTofu/Terraform) -> K3s +
 # platform + Argo CD (Ansible driving scripts/01..03) -> GitOps takes over.
 #
-# Prerequisites: terraform/terraform.tfvars filled in (see setup.sh), local
+# Prerequisites: terraform/terraform.tfvars filled in (see setup.sh),
+# TF_VAR_vm_password exported, local
 # commits PUSHED to the manifests repo (nodes and Argo CD pull from git),
 # and the VM template with qemu-guest-agent preinstalled.
 #
@@ -26,6 +27,13 @@ echo -e "${GREEN}================================${NC}"
 if [ ! -f "terraform/terraform.tfvars" ]; then
     echo -e "${RED}Error: terraform/terraform.tfvars not found!${NC}"
     echo "Run ./setup.sh, then edit terraform/terraform.tfvars"
+    exit 1
+fi
+
+# The VM password is kept out of terraform.tfvars on purpose.
+if [ -z "${TF_VAR_vm_password:-}" ]; then
+    echo -e "${RED}Error: TF_VAR_vm_password is not set!${NC}"
+    echo "export TF_VAR_vm_password='<at least 12 chars>' (cloud-init user's password on every VM)"
     exit 1
 fi
 

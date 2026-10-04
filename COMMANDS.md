@@ -49,6 +49,7 @@ automated:
 ```bash
 ./setup.sh    # prereq check; creates terraform/terraform.tfvars from the example
 # edit terraform/terraform.tfvars, push local commits, then:
+export TF_VAR_vm_password='...'   # VM console password, min 12 chars; kept out of tfvars
 ./deploy.sh
 ```
 
@@ -216,6 +217,7 @@ No secret is stored in git. Two sources:
 
 ```bash
 # Add/change/remove an OIDC or LDAP provider: edit terraform.tfvars, then
+# (reads tfvars directly - no apply needed; needs `tofu -chdir=terraform init`)
 bash scripts/06-auth-providers.sh
 # commit + push apps/gitea/values-oidc.yaml / values-ldap.yaml if it says they
 # changed, then restart Gitea so it re-reads the credentials:

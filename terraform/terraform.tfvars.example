@@ -3,6 +3,8 @@ proxmox_api_url          = "https://<YOUR_PROXMOX_HOST>:8006/api2/json"
 proxmox_api_token_id     = "root@pam!terraform"
 proxmox_api_token_secret = "YOUR_TOKEN_SECRET_HERE"
 
+# The VM password is NOT set here: export TF_VAR_vm_password before deploy.sh.
+
 # SSH Key
 ssh_public_key = "ssh-ed25519 YOUR_PUBLIC_KEY_HERE"
 
