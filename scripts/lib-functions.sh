@@ -169,6 +169,7 @@ install_node_prerequisites() {
 
 on_exit() {
   local handler="$1"
+  # shellcheck disable=SC2064 # expand now on purpose: $handler is local
   trap "${handler}" EXIT
 }
 

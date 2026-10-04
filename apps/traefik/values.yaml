@@ -9,11 +9,9 @@ image:
 
 deployment:
   replicas: 2
-  podAnnotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/path: /metrics
-    # The chart exposes metrics on the dedicated "metrics" entrypoint.
-    prometheus.io/port: "9100"
+  # No prometheus.io/* podAnnotations: the chart already sets scrape/path/port
+  # (port 9100, its "metrics" entrypoint) while metrics.prometheus is enabled
+  # (the default). Setting them here too renders duplicate keys.
 
 # Chart default is disabled. With 2 replicas + hard anti-affinity below,
 # maxUnavailable: 1 keeps one Traefik pod serving ingress through any single

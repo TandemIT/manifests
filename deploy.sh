@@ -95,7 +95,8 @@ ansible-playbook -i ansible/inventory.yml ansible/system-utils-install.yml
 step "Step 4: Installing K3s cluster + platform + Argo CD"
 ansible-playbook -i ansible/inventory.yml ansible/k3s-install.yml
 
-export KUBECONFIG="$(pwd)/kubeconfig"
+KUBECONFIG="$(pwd)/kubeconfig"
+export KUBECONFIG
 
 # OIDC/LDAP credentials live only in terraform.tfvars; Gitea (wave 6) waits
 # on these secrets, so they go in while Argo CD works through earlier waves.
