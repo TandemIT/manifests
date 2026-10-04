@@ -30,11 +30,14 @@ sed -e "s|value: eth0|value: ${VIP_INTERFACE}|" \
 log "kube-vip static pod placed (interface ${VIP_INTERFACE}, VIP ${VIP})"
 
 step_header 2 "Joining K3s cluster as control plane via ${VIP}:6443"
+# CIDRs must match 01-bootstrap-first-master.sh, or K3s refuses to join.
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
   K3S_TOKEN="${K3S_TOKEN}" \
   INSTALL_K3S_EXEC="server \
     --server https://${VIP}:6443 \
+    --cluster-cidr 10.42.0.0/16 \
+    --service-cidr 10.43.0.0/16 \
     --tls-san ${VIP} \
     --disable traefik \
     --disable servicelb \

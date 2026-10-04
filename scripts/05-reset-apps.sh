@@ -20,6 +20,7 @@ KEPT_SECRETS=(
   gitea/gitea-admin
   gitea/postgresql-ha-credentials
   gitea/postgresql-ha-pgpool-credentials
+  gitea/gitea-metrics-token
   garage/garage-rpc
   anubis/anubis-key
 )

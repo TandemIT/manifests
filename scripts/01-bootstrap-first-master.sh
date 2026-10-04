@@ -33,10 +33,15 @@ sed -e "s|value: eth0|value: ${VIP_INTERFACE}|" \
 log "kube-vip static pod placed (interface ${VIP_INTERFACE}, VIP ${VIP})"
 
 step_header 2 "Installing K3s ${K3S_VERSION} as first control plane"
+# CIDRs are the K3s defaults, pinned because apps/gitea/values.yaml
+# (REVERSE_PROXY_TRUSTED_PROXIES) depends on the pod CIDR. Fixed at cluster
+# init; every server must pass the same values (02-join-control-plane.sh).
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
   INSTALL_K3S_EXEC="server \
     --cluster-init \
+    --cluster-cidr 10.42.0.0/16 \
+    --service-cidr 10.43.0.0/16 \
     --tls-san ${VIP} \
     --disable traefik \
     --disable servicelb \
@@ -91,6 +96,8 @@ bootstrap_secret postgresql-ha-credentials gitea \
   "repmgr-password=$(openssl rand -hex 24)"
 bootstrap_secret postgresql-ha-pgpool-credentials gitea \
   "admin-password=$(openssl rand -hex 24)" "sr-check-password=$(openssl rand -hex 24)"
+# Bearer token for Gitea's /metrics, which Traefik would otherwise expose.
+bootstrap_secret gitea-metrics-token gitea "token=$(openssl rand -hex 32)"
 bootstrap_secret garage-rpc garage "rpc-secret=$(openssl rand -hex 32)"
 bootstrap_secret anubis-key anubis "ED25519_PRIVATE_KEY_HEX=$(openssl rand -hex 32)"
 for secret in gitea-runner-registration gitea-api-token; do

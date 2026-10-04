@@ -28,7 +28,7 @@ reconciles everything else from this repository. Operational commands are in
 | system-upgrade-controller | v0.20.1 | `apps/system-upgrade-controller/kustomization.yaml` |
 | Traefik | v3.3.4 (chart 34.4.1) | `argocd/apps/traefik.yaml`, `apps/traefik/values.yaml` |
 | cert-manager | v1.15.3 (chart) | `argocd/apps/cert-manager.yaml` |
-| Gitea | 1.27.3 (chart 12.7.0: postgresql-ha 16.3.2, valkey-cluster 3.0.24) | `argocd/apps/gitea.yaml`, `apps/gitea/values.yaml` |
+| Gitea | 28.0.0 (chart 12.7.0: postgresql-ha 16.3.2, valkey-cluster 3.0.24) | `argocd/apps/gitea.yaml`, `apps/gitea/values.yaml` |
 | Garage | v1.0.0 | `apps/garage/statefulset.yaml` |
 | Anubis | v1.27.0 | `apps/anubis/deployment.yaml` |
 | Gitea runner | 3.5.0 | `apps/gitea-runner/deployment.yaml` |

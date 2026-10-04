@@ -1,5 +1,10 @@
 replicaCount: 1
 
+# The chart default (RollingUpdate, maxSurge 100%) runs the old and new pod
+# side by side, so an upgrade's DB migration races the old pod's writes.
+strategy:
+  type: Recreate
+
 deployment:
   # First install waits for PostgreSQL HA and Valkey; the 600 s default
   # expires before pgpool is ready.
@@ -8,8 +13,9 @@ deployment:
 image:
   registry: ""
   repository: gitea/gitea
-  # Chart 12.7.0 ships 1.27.0; pinned to the patch release.
-  tag: "1.27.3"
+  # Chart 12.7.0 ships 1.27.0; pinned separately (no chart release ships 28
+  # yet). Chart 12.7.0's init scripts and CLI flags work with 28.0.0.
+  tag: "28.0.0"
   pullPolicy: IfNotPresent
   rootless: true
 
@@ -122,30 +128,35 @@ gitea:
 
   config:
     server:
+      # Gitea 28 derives the domain from ROOT_URL; DOMAIN is only set so the
+      # chart doesn't fill in a placeholder of its own.
       DOMAIN: git.open-ict.hu
       ROOT_URL: "https://git.open-ict.hu/"
+      # Also the HTTP Service's targetPort; the chart doesn't default it there.
       HTTP_PORT: "3000"
       # Traefik terminates TLS, so Gitea should use HTTP internally
       PROTOCOL: http
       ENABLE_GZIP: true
-      TRUSTED_PROXIES: "127.0.0.1/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       SSH_DOMAIN: git.open-ict.hu
       SSH_PORT: "2222"
       SSH_LISTEN_PORT: "2222"
       START_SSH_SERVER: "true"
-      DISABLE_SSH: "false"
       LFS_START_SERVER: "true"
-      OFFLINE_MODE: "false"
 
     database:
       SSL_MODE: disable
 
     service:
+      # Explicit: Gitea 28 defaults to true. OIDC users self-register.
       DISABLE_REGISTRATION: "false"
       ALLOW_ONLY_EXTERNAL_REGISTRATION: "true"
 
     actions:
       ENABLED: "true"
+      # Completed runs (with jobs and tasks) are deleted after this many days
+      # by cron.cleanup_action_runs; 0 keeps them forever. 400 is Gitea's
+      # default, set here so the retention is a visible choice.
+      RUN_RETENTION_DAYS: "400"
 
     # Also enables Gitea's Terraform/OpenTofu state registry (backend "http").
     packages:
@@ -153,8 +164,31 @@ gitea:
 
     security:
       INSTALL_LOCK: "true"
-      # Moved from [webhook] (deprecated fallback, removed in Gitea 28).
-      ALLOWED_HOST_LIST: "*.svc.cluster.local"
+      # Outbound HTTP from webhooks and OAuth2 avatar fetches. Strict allows
+      # only the listed hosts; the default (lax) allows every public host and
+      # applies the list to private ones only. In strict mode an entry without
+      # a port covers only 80/443. auth.open-ict.hu is the Authentik IdP
+      # (values-oidc.yaml): add the host of any other provider here.
+      # Mirrors and migrations use [migrations], not this list. In-cluster
+      # webhook targets also need an egress rule in networkpolicy.yaml, which
+      # today allows only 443/587 outbound.
+      # https://github.com/go-gitea/gitea/pull/39426
+      EGRESS_MODE: strict
+      ALLOWED_HOST_LIST: "*.svc.cluster.local:*,auth.open-ict.hu"
+      # Take the client IP from X-Forwarded-For when the peer is a pod:
+      # Traefik, then Anubis (2 hops; the Anubis bypass route is 1).
+      # The pod CIDR is pinned in scripts/01 and 02. Every pod the
+      # NetworkPolicy admits is trusted, runners included, so a workflow can
+      # spoof its logged IP; Gitea uses the IP for logs, not authorization.
+      REVERSE_PROXY_TRUSTED_PROXIES: "10.42.0.0/16"
+      REVERSE_PROXY_LIMIT: "2"
+
+    # Security events (logins, token, key, permission and settings changes),
+    # shown in the admin/org/repo/user settings; pruned by
+    # cron.delete_old_audit_events.
+    audit:
+      RECORD_OUTPUT: database
+      RETENTION_DAYS: "90"
 
     # Default backend for LFS, packages, Actions artifacts/logs, attachments,
     # avatars and repo-archive (none sets its own STORAGE_TYPE). Repositories
@@ -192,3 +226,10 @@ gitea:
         secretKeyRef:
           name: postgresql-ha-credentials
           key: password
+    # /metrics answers only with "Authorization: Bearer <token>". Secret
+    # from scripts/01.
+    - name: GITEA__METRICS__TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: gitea-metrics-token
+          key: token

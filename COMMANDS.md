@@ -59,6 +59,14 @@ sed -e "s|value: eth0|value: ${IFACE}|" \
 bash scripts/06-auth-providers.sh
 # commit + push apps/gitea/values-oidc.yaml / values-ldap.yaml if it reports a change, then:
 kubectl rollout restart deployment/gitea -n gitea
+# A provider on a new host also needs that host in [security] ALLOWED_HOST_LIST
+# (apps/gitea/values.yaml, EGRESS_MODE strict), or its avatar fetches are blocked.
+
+# Rotate the Gitea /metrics bearer token
+kubectl delete secret gitea-metrics-token -n gitea
+kubectl create secret generic gitea-metrics-token -n gitea \
+  --from-literal=token="$(openssl rand -hex 32)"
+kubectl rollout restart deployment/gitea -n gitea
 
 # Rotate the Anubis signing key (invalidates active challenge cookies)
 kubectl delete secret anubis-key -n anubis
