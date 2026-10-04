@@ -320,6 +320,7 @@ resource "local_file" "ansible_inventory" {
           k3s_vip                 = var.vip
           manifests_repo          = var.manifests_repo
           manifests_revision      = var.manifests_revision
+          public_gateway          = var.public_vlan_tag == null ? null : var.public_gateway
         }
       }
       k3s_cluster = {

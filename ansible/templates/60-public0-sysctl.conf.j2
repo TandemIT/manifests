@@ -1,0 +1,9 @@
+# Managed by Ansible (system-utils-install.yml).
+# Linux always fails the reverse-path check on an interface without an IPv4
+# address, and the effective value is max(all, <iface>). So all=0, loose
+# mode (2) kept on every other interface (default + the uplink), and 0 only
+# on public0, which public0.nft guards instead.
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.{{ ansible_default_ipv4.interface }}.rp_filter = 2
+net.ipv4.conf.public0.rp_filter = 0

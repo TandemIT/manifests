@@ -2,6 +2,14 @@
 - name: Install System Utilities on all nodes
   hosts: all
   become: true
+  vars:
+    # Policy-routing table / fwmark for replies to public0 connections.
+    public0_table: 105
+    public0_fwmark: 1048576 # 0x100000, clear of kube-proxy's 0x4000/0x8000
+    # MetalLB addresses (single source: the pool manifest).
+    public_lb_ranges: >-
+      {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../platform/metallb/ipaddresspool.yaml')
+          | from_yaml).spec.addresses }}
   tasks:
     - name: Update apt cache
       ansible.builtin.apt:
@@ -58,8 +66,61 @@
         - apt-daily.timer
         - apt-daily-upgrade.timer
 
-    # public_mac comes from the inventory (terraform public_vlan_tag > 0).
-    - name: Configure the public-VLAN NIC (up, no address)
+    # Public-VLAN NIC (terraform public_vlan_tag): only on hosts with
+    # public_mac in the inventory. Guard and sysctls go in before the link
+    # comes up.
+    - name: Require public_gateway with the public NIC
+      ansible.builtin.assert:
+        that: public_gateway | default(none) is not none
+        fail_msg: Set public_gateway in terraform.tfvars (router on the public VLAN).
+        quiet: true
+      when: public_mac is defined
+      tags: [public-nic]
+
+    - name: Reverse-path filter settings for public0
+      ansible.builtin.template:
+        src: 60-public0-sysctl.conf.j2
+        dest: /etc/sysctl.d/60-public0.conf
+        owner: root
+        group: root
+        mode: '0644'
+      register: public0_sysctl
+      when: public_mac is defined
+      tags: [public-nic]
+
+    - name: Install the public0 nftables rules
+      ansible.builtin.template:
+        src: public0.nft.j2
+        dest: /etc/public0.nft
+        owner: root
+        group: root
+        mode: '0644'
+        validate: nft -c -f %s
+      register: public0_nft
+      when: public_mac is defined
+      tags: [public-nic]
+
+    - name: Install public0-nft.service
+      ansible.builtin.template:
+        src: public0-nft.service.j2
+        dest: /etc/systemd/system/public0-nft.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: public0_unit
+      when: public_mac is defined
+      tags: [public-nic]
+
+    - name: Enable public0-nft.service and (re)load the rules
+      ansible.builtin.systemd:
+        name: public0-nft.service
+        enabled: true
+        state: "{{ 'restarted' if (public0_nft is changed or public0_unit is changed) else 'started' }}"
+        daemon_reload: "{{ public0_unit is changed }}"
+      when: public_mac is defined
+      tags: [public-nic]
+
+    - name: Configure the public-VLAN NIC (up, no address, reply routing)
       ansible.builtin.template:
         src: 60-public0.yaml.j2
         dest: /etc/netplan/60-public0.yaml
@@ -70,17 +131,26 @@
       when: public_mac is defined
       tags: [public-nic]
 
-    - name: Apply netplan (renames the NIC to public0 and brings it up)
+    - name: Apply netplan (renames the NIC to public0, brings it up)
       ansible.builtin.command: netplan apply
       when: public_nic is changed
       tags: [public-nic]
 
-    - name: Check public0 is up with no addresses
-      ansible.builtin.command: ip -o addr show dev public0
-      register: public0_addrs
+    # After netplan: the per-interface keys need public0 to exist.
+    - name: Apply the reverse-path filter settings
+      ansible.builtin.command: sysctl -p /etc/sysctl.d/60-public0.conf
+      when: public0_sysctl is changed or public_nic is changed
+      tags: [public-nic]
+
+    - name: Check public0 (no addresses, reply route and rule present)
+      ansible.builtin.shell: |
+        set -e
+        [ -z "$(ip -o addr show dev public0)" ]
+        ip route show table {{ public0_table }} | grep -q "default via {{ public_gateway }} dev public0"
+        ip rule show | grep -q "fwmark {{ '0x%x' | format(public0_fwmark) }} lookup {{ public0_table }}"
+        [ "$(sysctl -n net.ipv4.conf.public0.rp_filter)" = 0 ]
+        nft list table inet public0 >/dev/null
       changed_when: false
-      failed_when: >-
-        public0_addrs.rc != 0 or public0_addrs.stdout | length > 0
       when: public_mac is defined
       tags: [public-nic]
 

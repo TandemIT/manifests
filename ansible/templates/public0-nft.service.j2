@@ -1,0 +1,16 @@
+# Managed by Ansible (system-utils-install.yml).
+[Unit]
+Description=nftables guard + reply marking for public0 (MetalLB public NIC)
+# Loaded before networking, so public0 is never up without the guard.
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/public0.nft
+ExecReload=/usr/sbin/nft -f /etc/public0.nft
+ExecStop=/usr/sbin/nft delete table inet public0
+
+[Install]
+WantedBy=multi-user.target

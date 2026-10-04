@@ -92,6 +92,20 @@ variable "public_vlan_tag" {
   }
 }
 
+# Router on the public VLAN. Replies to connections that came in on the
+# public NIC go back out through it (policy routing): the router drops them
+# when they leave via the internal VLAN instead.
+variable "public_gateway" {
+  description = "Gateway on the public VLAN (required when public_vlan_tag is set)"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.public_vlan_tag == null || can(cidrhost("${var.public_gateway}/32", 0))
+    error_message = "public_gateway must be an IPv4 address when public_vlan_tag is set."
+  }
+}
+
 variable "gateway" {
   description = "Network gateway"
   type        = string

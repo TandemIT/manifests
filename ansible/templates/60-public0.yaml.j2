@@ -1,6 +1,11 @@
 # Managed by Ansible (system-utils-install.yml).
 # Public-VLAN NIC: link up, no address of any kind. MetalLB (L2) answers ARP
-# for the LoadBalancer IP on it; nothing else lives on this VLAN.
+# for the LoadBalancer IP on it.
+#
+# Replies must leave the way the request came in: the router drops replies
+# that come back via the internal VLAN. public0.nft marks connections that
+# arrive here (fwmark {{ public0_fwmark }}); this rule sends their replies to table
+# {{ public0_table }}, whose only route is the public gateway on this link.
 network:
   version: 2
   ethernets:
@@ -12,3 +17,13 @@ network:
       dhcp6: false
       accept-ra: false
       link-local: []
+      routes:
+        - to: default
+          via: {{ public_gateway }}
+          on-link: true
+          table: {{ public0_table }}
+      routing-policy:
+        - to: 0.0.0.0/0 # netplan requires from/to; this is "all"
+          mark: {{ public0_fwmark }}
+          table: {{ public0_table }}
+          priority: {{ public0_table }}

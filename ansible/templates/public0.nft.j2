@@ -1,0 +1,26 @@
+#!/usr/sbin/nft -f
+# Managed by Ansible (system-utils-install.yml). Own table: never flushes the
+# kube-proxy/flannel rules. Loaded by public0-nft.service.
+table inet public0
+delete table inet public0
+
+table inet public0 {
+  # The public VLAN is shared with other hosts. Accept only Traefik's ports
+  # on the MetalLB address(es); drop everything else before conntrack, so
+  # the node can't be used as a router into the internal VLAN or pods.
+  chain guard {
+    type filter hook prerouting priority raw; policy accept;
+    iifname "public0" ip daddr { {{ public_lb_ranges | join(', ') }} } tcp dport { 80, 443, 2222 } accept
+    iifname "public0" ip daddr { {{ public_lb_ranges | join(', ') }} } icmp type { echo-request, destination-unreachable, time-exceeded } accept
+    iifname "public0" drop
+  }
+
+  # Mark connections that arrive on public0; mark their replies (coming from
+  # the pod, not public0) so the policy rule in 60-public0.yaml routes them
+  # back out public0.
+  chain replies {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname "public0" ct state new ct mark set ct mark | {{ '0x%x' | format(public0_fwmark) }}
+    iifname != "public0" ct mark & {{ '0x%x' | format(public0_fwmark) }} == {{ '0x%x' | format(public0_fwmark) }} meta mark set meta mark | {{ '0x%x' | format(public0_fwmark) }}
+  }
+}
