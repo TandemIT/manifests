@@ -6,18 +6,10 @@ metadata:
     app.kubernetes.io/name: gitea-runner
     app.kubernetes.io/part-of: ci-runners
   annotations:
-    # Wave 1: sync only after the runner-token-bootstrap Job (wave 0) has
-    # minted a real registration token, so runners never start against a
-    # placeholder.
+    # After the token Job (wave 0), so runners never register with a placeholder.
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  # Fixed replica count — no autoscaler. KEDA's github-runner trigger doesn't
-  # support Gitea's instance-wide runner scope (its runnerScope enum only
-  # accepts org/ent/repo, not Gitea's "global" instance token), and no
-  # Gitea-native KEDA scaler has been released (kedacore/keda#8087 — open,
-  # unreviewed, unmerged as of 2026-09-26). KEDA autoscaling is PENDING: see
-  # the commented-out scaledobject.yaml/triggerauthentication.yaml in this
-  # directory for the prepared config and the enablement checklist.
+  # Fixed until a KEDA Gitea scaler ships: see scaledobject.yaml.
   replicas: 5
   selector:
     matchLabels:
@@ -40,22 +32,15 @@ spec:
     spec:
       serviceAccountName: gitea-runner
       automountServiceAccountToken: false
-      # Must exceed shutdown_timeout in configmap (3600s) so Kubernetes does not
-      # SIGKILL a pod that is still draining a running CI job.
+      # Above shutdown_timeout (3600s, configmap.yaml) so a draining job isn't killed.
       terminationGracePeriodSeconds: 3660
       securityContext:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
         - name: register
-          # gitea/act_runner is deprecated (Docker Hub: "Deprecated Gitea
-          # runner. Moved to gitea/runner"); project renamed, binary renamed
-          # act_runner -> gitea-runner. Verified against the pinned Gitea
-          # 1.27.3 server: registration needs Gitea >= v1.21 (well below
-          # ours) and the register/daemon CLI flags used below are
-          # unchanged at this runner version.
-          # https://gitea.com/gitea/runner (project + Dockerfile)
-          # https://hub.docker.com/r/gitea/act_runner (deprecation notice)
+          # gitea/act_runner is deprecated in favour of gitea/runner; the
+          # binary is now gitea-runner. https://gitea.com/gitea/runner
           image: gitea/runner:3.5.0
           imagePullPolicy: IfNotPresent
           securityContext:
@@ -88,14 +73,8 @@ spec:
                 --instance "${GITEA_INSTANCE_URL}" \
                 --token "${GITEA_RUNNER_REGISTRATION_TOKEN}" \
                 --name "${GITEA_RUNNER_NAME}"
-          # Verified live (Docker Desktop test cluster, 2026-09-22): this
-          # container had no resources block at all. This namespace's
-          # ResourceQuota (resourcequota.yaml) tracks requests/limits for
-          # both cpu and memory, so every container must declare all four or
-          # the pod is refused at admission — meaning every single runner
-          # pod (all 5+ replicas) failed to create, on every sync, until
-          # this was added. One-shot HTTP registration call, same binary as
-          # the runner container below but far lighter — sized accordingly.
+          # Required: the namespace ResourceQuota rejects any container
+          # without cpu/memory requests and limits.
           resources:
             requests:
               cpu: 50m
@@ -115,7 +94,6 @@ spec:
               mountPath: /.cache
       containers:
         - name: runner
-          # See the register initContainer above for the image/binary rename.
           image: gitea/runner:3.5.0
           imagePullPolicy: IfNotPresent
           securityContext:
@@ -182,20 +160,17 @@ spec:
             runAsUser: 0
             runAsGroup: 0
             readOnlyRootFilesystem: false
-            # RuntimeDefault seccomp (inherited from pod) blocks mount/unshare syscalls
-            # that dockerd needs even with privileged: true on k3s nodes.
+            # The pod's RuntimeDefault blocks mount/unshare, which dockerd
+            # needs even when privileged.
             seccompProfile:
               type: Unconfined
           env:
             - name: DOCKER_TLS_CERTDIR
               value: ""
           args:
-            # No --host arg: entrypoint defaults to tcp://0.0.0.0:2375 (one binding).
-            # Passing --host=tcp://127.0.0.1:2375 causes a double-bind because the
-            # entrypoint's host-detection grep is case-sensitive (matches --Host, not
-            # --host) and silently appends a second 0.0.0.0:2375 binding, making the
-            # 127.0.0.1 bind fail with EADDRINUSE. Runner connects via 127.0.0.1:2375
-            # which is reachable on 0.0.0.0 within the pod network namespace.
+            # No --host: the entrypoint already binds tcp://0.0.0.0:2375, and its
+            # case-sensitive check would add a second, conflicting bind. The
+            # runner reaches it on 127.0.0.1.
             - --storage-driver=vfs
           resources:
             requests:

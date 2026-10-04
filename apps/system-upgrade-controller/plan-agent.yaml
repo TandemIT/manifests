@@ -1,8 +1,5 @@
-# Worker K3s upgrades. prepare references the k3s-server Plan by name — SUC's
-# documented dependency mechanism for the standard k3s server-before-agent
-# upgrade order (the rancher/k3s-upgrade image's own "prepare" subcommand
-# blocks until that Plan has applied on its nodes). Same window/channel/
-# concurrency reasoning as plan-server.yaml.
+# prepare blocks until the k3s-server Plan has finished (servers before
+# agents). Window and channel: see plan-server.yaml.
 apiVersion: upgrade.cattle.io/v1
 kind: Plan
 metadata:

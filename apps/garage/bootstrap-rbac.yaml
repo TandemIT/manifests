@@ -1,8 +1,5 @@
-# RBAC for the garage-bootstrap Job: exec into the Garage pods to drive the
-# garage CLI and wait on its StatefulSet rollout. The Secrets it creates
-# (garage-gitea-storage-credentials, garage-backups-credentials) land in the
-# gitea namespace, not this one — that cross-namespace grant is in
-# apps/gitea/rbac-garage-bootstrap.yaml.
+# The Job drives the garage CLI via exec. Its Secrets land in the gitea
+# namespace: that grant is in apps/gitea/rbac-garage-bootstrap.yaml.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

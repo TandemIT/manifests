@@ -1,8 +1,5 @@
-# Values for the jetstack/cert-manager chart (version pinned in
-# argocd/apps/cert-manager.yaml — the single source of truth for the chart version).
-#
-# No hostAliases needed for git.open-ict.hu — CoreDNS answers it cluster-wide
-# (platform/coredns/coredns-custom.yaml).
+# The HTTP-01 self-check resolves git.open-ict.hu through the CoreDNS
+# override (platform/coredns/), so no hostAliases are needed here.
 crds:
   enabled: true
   # Keep CRDs (and all Certificates/Issuers with them) if the app is deleted.

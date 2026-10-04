@@ -1,15 +1,7 @@
-# Daily logical backup of the gitea database, uploaded to the Garage
-# platform-backups bucket. This is NOT a substitute for PostgreSQL-HA's
-# streaming replication (which protects against a node dying, not a bad
-# migration or accidental deletion) — see README's "Backups" section.
-#
-# User/db match the Gitea chart's default
-# postgresql-ha.global.postgresql.{username,database} ("gitea"/"gitea" — not
-# overridden in values.yaml); password is the app-user key ("password")
-# from the same postgresql-ha-credentials secret the chart itself consumes,
-# not the superuser. Service name is the chart's standard subchart naming
-# (gitea-postgresql-ha-pgpool — confirmed from the pinned chart's
-# _helpers.tpl, not guessed).
+# pg_dump through pgpool as the app user (chart defaults gitea/gitea).
+# --no-owner, so a dump restores under a new cluster's credentials.
+# Replication protects against node loss; this protects against bad
+# migrations and deletions, which replicate too.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -19,7 +11,7 @@ metadata:
     app.kubernetes.io/name: backup-postgresql
     app.kubernetes.io/part-of: source-control
 spec:
-  schedule: "30 1 * * *" # 01:30 local — before Kured's 02:00 window
+  schedule: "30 1 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -38,17 +30,8 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           initContainers:
-            # Docker Official Image, actively maintained (unlike
-            # bitnamilegacy/*, Docker Hub's frozen "no longer updated"
-            # registry). Only the pg_dump client is used here, not the
-            # server. Server is postgresql-ha's pinned
-            # bitnamilegacy/postgresql-repmgr:17.6.0 (major version 17, confirmed
-            # from the exact chart version this repo pins — see
-            # apps/gitea/values.yaml postgresql-ha section) — pg_dump is
-            # forward/backward compatible across patch releases of the same
-            # major version, so 17.11's client against a 17.6.0 server is
-            # fine.
-            # https://hub.docker.com/_/postgres
+            # Official image (maintained, unlike bitnamilegacy); major
+            # version must match the server (postgresql-repmgr 17.6.0).
             - name: dump
               image: postgres:17.11
               env:
@@ -105,7 +88,6 @@ spec:
                   for f in /backup/*.sql.gz; do
                     aws s3 cp "${f}" "s3://platform-backups/postgresql/$(basename "${f}")"
                   done
-                  # 14-day retention: delete objects older than 14 days.
                   cutoff=$(date -d '-14 days' +%Y%m%dT%H%M%SZ)
                   aws s3 ls s3://platform-backups/postgresql/ | awk '{print $4}' | while read -r key; do
                     stamp=$(echo "${key}" | sed -E 's/gitea-([0-9TZ]+)\.sql\.gz/\1/')

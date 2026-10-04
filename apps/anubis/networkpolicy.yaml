@@ -1,6 +1,4 @@
-# Anubis pods: ingress only from the traefik namespace on 8080 (the metrics
-# port 9090 is not reachable). Egress to Gitea pods on 3000, kube-dns on 53,
-# and any address on 443. Everything else is denied.
+# The metrics port (9090) is deliberately unreachable.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -25,8 +23,7 @@ spec:
         - protocol: TCP
           port: 8080
   egress:
-    # Gitea pods on 3000: the reverse-proxy upstream (TARGET) and
-    # OG_PASSTHROUGH Open Graph metadata fetches
+    # Gitea: proxy upstream (TARGET) and Open Graph fetches (OG_PASSTHROUGH).
     - to:
         - namespaceSelector:
             matchLabels:

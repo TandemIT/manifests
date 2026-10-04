@@ -1,18 +1,7 @@
-# Hard ceiling so the runner Deployment cannot starve platform workloads
-# sharing the same schedulable nodes (control-plane nodes are untainted).
-#
-# Sized against terraform/terraform.tfvars.example's node defaults (3x 2CPU/4Gi
-# control-plane + 3x 1CPU/2Gi workers = 9 CPU / 18Gi cluster-wide) — the real
-# terraform.tfvars is gitignored, so live sizing is unverified. These limits
-# are deliberately conservative given that; re-check against `kubectl describe
-# node` and raise if live capacity is larger.
-#
-# No autoscaler today — replicas is a fixed 5 (see deployment.yaml). This
-# quota is a safety net against a manual replica bump rather than a KEDA
-# burst: at 5 replicas the worst case is 7.5 CPU / 7.5Gi limits
-# (5 x (dind 1CPU/1Gi + runner 500m/512Mi)), inside limits.cpu 8 /
-# limits.memory 10Gi. A 6th pod — including the maxSurge: 1 pod during a
-# rolling update — would need 9 CPU of limits and exceed limits.cpu.
+# Keeps runners from starving platform pods on the shared, untainted nodes.
+# Sized against terraform.tfvars.example's node defaults (9 CPU / 18Gi in
+# total). 5 replicas use 7.5 CPU / 7.5Gi of limits; a 6th pod (including the
+# maxSurge pod during a rollout) exceeds limits.cpu.
 apiVersion: v1
 kind: ResourceQuota
 metadata:

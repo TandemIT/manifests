@@ -1,8 +1,5 @@
-# Lets the garage-bootstrap Job (garage namespace) create the two Secrets
-# it mints for this namespace: garage-gitea-storage-credentials (LFS/
-# packages/actions object storage) and garage-backups-credentials (backup
-# CronJobs). Lives here because the Role must be created in the gitea
-# namespace — same cross-namespace pattern as rbac-runner-bootstrap.yaml.
+# Lets the garage-bootstrap Job (garage namespace) create its two Secrets in
+# this namespace. Lives in this app because the Role must be in gitea.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

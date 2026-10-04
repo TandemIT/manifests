@@ -1,10 +1,7 @@
-# Values for the official traefik/traefik chart (version pinned in
-# argocd/apps/traefik.yaml — the single source of truth for the chart version).
-# The entrypoint names web/websecure/ssh must not change — every IngressRoute
+# The entrypoint names web/websecure/ssh must not change: every IngressRoute
 # references them.
 
 image:
-  # Pin the app version independently of the chart default.
   tag: v3.3.4
 
 deployment:
@@ -65,13 +62,9 @@ ports:
 service:
   spec:
     allocateLoadBalancerNodePorts: false
-    # MetalLB runs in L2 mode (platform/metallb): with the Kubernetes
-    # default "Cluster" traffic policy, kube-proxy may hop traffic to a pod
-    # on a different node and SNATs it in the process, replacing the real
-    # client address with a node IP. "Local" keeps the packet on the node
-    # that received it so Traefik sees the true source IP — required for
-    # ClientIP()-based routing (apps/anubis) and IP-allowlist middlewares
-    # (argocd/install) to see anything other than a node address.
+    # "Cluster" lets kube-proxy hop to another node and SNAT the client IP
+    # away. "Local" preserves it, which ClientIP() routing (apps/anubis) and
+    # the Argo CD allowlist depend on.
     externalTrafficPolicy: Local
 
 logs:

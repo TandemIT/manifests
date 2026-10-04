@@ -1,8 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Garage — the platform's shared S3-compatible object storage. Serves
-# Gitea's LFS/packages/actions storage and the platform backup CronJobs.
+# Sets the namespace on bootstrap-rbac.yaml and job-bootstrap.yaml, which omit it.
 namespace: garage
 
 resources:

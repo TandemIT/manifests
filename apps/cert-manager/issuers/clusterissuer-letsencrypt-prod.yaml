@@ -7,11 +7,8 @@ metadata:
     app.kubernetes.io/part-of: platform-pki
 spec:
   acme:
-    # REQUIRED: replace with a real mailbox that receives Let's Encrypt expiry notices.
-    email: platform-ops@open-ict.hu
     server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
-      # cert-manager stores the ACME account key in-cluster.
       name: letsencrypt-prod-account-key
     solvers:
       - http01:

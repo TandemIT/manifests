@@ -24,7 +24,7 @@
 # allows org/ent/repo), so it returned a hard error on every poll — invisible
 # because the fallback replica count equaled the floor. Gitea's instance-wide
 # runner token has no org/ent/repo equivalent, so that trigger is not
-# revivable; see README's "Runner Autoscaling" section.
+# revivable.
 #
 # The field names below are a best-effort reconstruction of PR #8087's
 # pre-review implementation — NOT a stable API; treat every field as

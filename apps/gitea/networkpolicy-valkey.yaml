@@ -14,7 +14,6 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Gitea application pods: client data plane
     - from:
         - podSelector:
             matchLabels:
@@ -22,18 +21,16 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
-    # Intra-cluster: Valkey nodes to each other (data plane + cluster bus)
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: valkey-cluster
       ports:
         - protocol: TCP
-          port: 6379 # data plane
+          port: 6379
         - protocol: TCP
-          port: 16379 # cluster bus — gossip, failover, slot coordination
+          port: 16379 # cluster bus: gossip, failover, slot coordination
   egress:
-    # Intra-cluster egress: Valkey nodes to each other (data plane + cluster bus)
     - to:
         - podSelector:
             matchLabels:
@@ -43,7 +40,6 @@ spec:
           port: 6379
         - protocol: TCP
           port: 16379
-    # DNS resolution
     - to:
         - namespaceSelector:
             matchLabels:

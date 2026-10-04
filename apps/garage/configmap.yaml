@@ -7,9 +7,8 @@ metadata:
     app.kubernetes.io/name: garage
     app.kubernetes.io/part-of: gitops
 data:
-  # __RPC_SECRET__ and __POD_NAME__ are replaced at pod startup by the init
-  # container (secret value from garage-rpc, pod name from the downward API).
-  # Do not change the placeholder tokens.
+  # __RPC_SECRET__ and __POD_NAME__ are filled in by the StatefulSet's init
+  # container; keep the placeholders as they are.
   garage.toml: |
     metadata_dir = "/data/meta"
     data_dir     = "/data/data"

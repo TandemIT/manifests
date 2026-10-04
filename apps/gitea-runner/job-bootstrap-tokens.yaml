@@ -1,21 +1,6 @@
-# Mints the runner registration token against the live Gitea API.
-#
-# Syncs at wave 0 (no sync-wave annotation, same as the namespace and RBAC);
-# the runner Deployment is wave 1, so it only starts once a real token
-# exists. The Job is idempotent: it no-ops once the secret already holds a
-# non-placeholder value. To force a re-mint (e.g. after revoking the token
-# in Gitea):
-#   kubectl delete secret gitea-runner-registration -n gitea-runners
-#   kubectl delete job runner-token-bootstrap -n gitea-runners
-# and let Argo CD re-sync.
-#
-# Cleanup on a cluster deployed while KEDA autoscaling was active: the
-# gitea-api-token secret and the "keda-scaler" Gitea personal access token
-# it wraps are unused while the gitea-api-token minting below is commented
-# out (PENDING, see scaledobject.yaml). Delete them by hand if they exist:
-#   kubectl delete secret gitea-api-token -n gitea-runners
-#   curl -X DELETE -u "<admin-user>:<admin-pass>" \
-#     http://gitea-http.gitea.svc.cluster.local:3000/api/v1/users/<admin-user>/tokens/keda-scaler
+# Mints the runner registration token via the Gitea admin API. No sync-wave
+# annotation (wave 0), so it runs before the Deployment (wave 1). No-ops once
+# the Secret holds a real token; re-mint steps are in COMMANDS.md.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -23,13 +8,9 @@ metadata:
   labels:
     app.kubernetes.io/name: runner-token-bootstrap
   annotations:
-    # Jobs are immutable: once created, the API server injects an auto-generated
-    # spec.selector and batch.kubernetes.io/{controller-uid,job-name} pod labels.
-    # A plain `kubectl replace` (Replace=true) sends the bare manifest without
-    # them and is rejected ("spec.selector: Required value") on every sync after
-    # the first, wedging the Application. Force=true makes Argo CD delete and
-    # recreate instead; the idempotency guard in the script below keeps re-runs
-    # safe (they no-op once the secret holds a non-placeholder value).
+    # Force=true: Replace alone is rejected on re-sync because the API server
+    # adds spec.selector to Jobs, which wedges the app. Delete+recreate is
+    # safe since the script is idempotent.
     argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 20
@@ -70,10 +51,8 @@ spec:
                 *) echo "Exists: gitea-runner-registration" ;;
               esac
 
-              # PENDING: KEDA Gitea runner scaler release (kedacore/keda#8087)
-              # Status: configured; mints the KEDA API token (gitea-api-token). Enable by uncommenting (strip the leading "# ") — scaledobject.yaml checklist item 5.
-              # Tracking: https://github.com/kedacore/keda/pull/8087
-              # The gitea-runner-registration minting above is active; only this block waits.
+              # PENDING kedacore/keda#8087: mints gitea-api-token for KEDA
+              # (scaledobject.yaml checklist item 5).
               # current=$(kubectl get secret gitea-api-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
               # case "${current}" in
               #   ""|placeholder*)
@@ -97,13 +76,6 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
-              # Verified live (Docker Desktop test cluster, 2026-09-22): this
-              # namespace's ResourceQuota (resourcequota.yaml) tracks
-              # limits.cpu, and Kubernetes rejects any pod that doesn't
-              # declare one once a namespace quota tracks that resource —
-              # without this the Job's pod is refused at admission
-              # ("forbidden: failed quota ... must specify limits.cpu") on
-              # every single sync, so the runner registration token never
-              # actually mints.
+              # Required by the namespace ResourceQuota.
               cpu: 100m
               memory: 128Mi

@@ -1,7 +1,5 @@
-# Lets the runner-token-bootstrap Job (gitea-runners namespace) read the
-# gitea-admin secret it needs to call the Gitea admin API. Lives in this app
-# because the Role must be created in the gitea namespace, and the
-# gitea-runner kustomization force-rewrites namespaces to gitea-runners.
+# Lets the runner-token-bootstrap Job (gitea-runners) read gitea-admin. Lives
+# here because the gitea-runner kustomization rewrites every namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

@@ -1,6 +1,4 @@
-# Egress from runner pods (app: gitea-runner — runner and dind containers
-# share the pod): Gitea pods in `gitea` on TCP 3000, kube-dns on 53, and any
-# address on TCP 443/80. All other egress is denied.
+# runner and dind share the pod, so this also limits CI job containers.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -26,7 +24,6 @@ spec:
         - protocol: TCP
           port: 3000
     - to:
-        # kube-dns for service discovery.
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system

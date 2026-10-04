@@ -1,24 +1,10 @@
-# Daily backup of the Garage-backed gitea-storage bucket (LFS, packages,
-# actions artifacts/logs, attachments, avatars, repo-archives, and the
-# Terraform/OpenTofu state registry — everything gitea.config.storage in
-# apps/gitea/values.yaml routes to Garage instead of the PVC). Complements
-# cronjob-backup-gitea-data.yaml (PVC only) and cronjob-backup-postgresql.yaml
-# (DB only) — together the three CronJobs now cover every category of Gitea
-# state. See README's "Backups" section.
+# The three backup CronJobs (this one, -gitea-data for the PVC, -postgresql
+# for the database) run before kured's 02:00 window and upload to Garage's
+# platform-backups bucket with 14-day retention.
 #
-# garage-gitea-storage-credentials is scoped to the gitea-storage bucket
-# only; garage-backups-credentials is scoped to platform-backups only —
-# neither key can read one bucket and write the other. This mirrors the
-# bucket to local emptyDir storage with the first key, tars it, then
-# uploads the archive with the second key (the same garage-backups-credentials
-# the other two backup CronJobs upload with).
-#
-# Caveat: the mirror step needs node ephemeral storage roughly equal to the
-# live bucket size (the tar step then needs a second, similar amount
-# alongside it before the mirror is cleaned up). This is fine while the
-# bucket is small; re-evaluate (e.g. tar-while-streaming, or a
-# rclone/restic-based approach with real dedup) if it grows large enough for
-# that to matter.
+# Each Garage key is scoped to one bucket, so this mirrors gitea-storage with
+# its own key and uploads the archive with garage-backups-credentials.
+# Needs about twice the bucket size in node ephemeral storage (mirror + tar).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -28,7 +14,7 @@ metadata:
     app.kubernetes.io/name: backup-garage-storage
     app.kubernetes.io/part-of: source-control
 spec:
-  schedule: "0 0 * * *" # 00:00 local — before backup-gitea-data (01:00) and backup-postgresql (01:30)
+  schedule: "0 0 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

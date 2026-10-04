@@ -7,12 +7,7 @@ metadata:
     app.kubernetes.io/name: gitea
     app.kubernetes.io/part-of: source-control
 spec:
-  # Targets the Gitea application pods created by the Helm chart.
-  # The chart uses app.kubernetes.io/name: gitea (not the legacy app: gitea label).
-  # Ingress to Gitea: traefik namespace (3000, 2222), any pod in gitea-runners
-  # (3000), anubis pods (3000). Egress: pgpool 5432, valkey-cluster 6379,
-  # kube-dns 53, any address on 443/587; Garage 3900 is added by
-  # networkpolicy-garage.yaml. Everything else is denied.
+  # Garage egress (3900) is added by networkpolicy-garage.yaml.
   podSelector:
     matchLabels:
       app.kubernetes.io/name: gitea
@@ -36,10 +31,8 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
-    # PENDING: KEDA Gitea runner scaler release (kedacore/keda#8087)
-    # Status: configured; allows any pod in `keda` to reach Gitea on TCP 3000 to poll job status. Enable by uncommenting (apps/gitea-runner/scaledobject.yaml checklist item 6).
-    # Tracking: https://github.com/kedacore/keda/pull/8087
-    # The traefik, gitea-runners and anubis rules around it are active; only this rule waits.
+    # PENDING kedacore/keda#8087: KEDA polling Gitea for queued jobs
+    # (apps/gitea-runner/scaledobject.yaml checklist item 6).
     # - from:
     #     - namespaceSelector:
     #         matchLabels:
@@ -47,8 +40,6 @@ spec:
     #   ports:
     #     - protocol: TCP
     #       port: 3000
-    # Anubis pods: proxied browser traffic (Anubis TARGET) and Open Graph
-    # metadata fetches (OG_PASSTHROUGH)
     - from:
         - namespaceSelector:
             matchLabels:
@@ -60,8 +51,7 @@ spec:
         - protocol: TCP
           port: 3000
   egress:
-    # Gitea connects to pgpool (connection router), not directly to PostgreSQL nodes.
-    # Bitnami postgresql-ha pgpool pods use app.kubernetes.io/component: pgpool.
+    # Gitea talks to pgpool, never to the PostgreSQL pods directly.
     - to:
         - podSelector:
             matchLabels:
@@ -69,8 +59,6 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Valkey cluster is chart-managed in the same namespace.
-    # The valkey-cluster subchart labels pods app.kubernetes.io/name: valkey-cluster.
     - to:
         - podSelector:
             matchLabels:
@@ -90,14 +78,14 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Allow outbound HTTPS for webhooks, OAuth providers, repository mirroring, and LFS.
+    # Webhooks, OAuth providers, mirroring.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 443
-    # Allow outbound SMTP submission (587, STARTTLS) for email notifications.
+    # SMTP submission for notification mail.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

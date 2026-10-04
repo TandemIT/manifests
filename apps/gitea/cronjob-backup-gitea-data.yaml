@@ -1,14 +1,6 @@
-# Daily tar of the Gitea PVC (repo data + app state — the chart's default
-# persistence.claimName gitea-shared-storage, not overridden in
-# apps/gitea/values.yaml; mounted read-only), uploaded to the Garage
-# platform-backups bucket. Complements cronjob-backup-postgresql.yaml and
-# cronjob-backup-garage-storage.yaml; see README's "Backups" section for what
-# this does and does not protect against.
-#
-# local-path PVCs are node-pinned (README: "Storage: local-path, its limits
-# ..."); podAffinity forces this Job's pod onto the same node as the running
-# Gitea pod so the read-only mount succeeds (RWO restricts by node, not pod
-# count — same-node multi-mount is fine).
+# Tars the Gitea PVC (gitea-shared-storage, the chart default). local-path
+# volumes are node-pinned, so podAffinity puts this pod on Gitea's node; RWO
+# allows a second mount on the same node.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -18,7 +10,7 @@ metadata:
     app.kubernetes.io/name: backup-gitea-data
     app.kubernetes.io/part-of: source-control
 spec:
-  schedule: "0 1 * * *" # 01:00 local — before backup-postgresql and Kured's 02:00 window
+  schedule: "0 1 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

@@ -1,7 +1,5 @@
 ---
-# pgpool: ingress only from Gitea application pods (app.kubernetes.io/name:
-# gitea) on 5432 — this does not include the backup-postgresql CronJob pods.
-# Egress only to PostgreSQL pods on 5432 and kube-dns.
+# Only Gitea pods may reach pgpool; this also shuts out backup-postgresql.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -18,7 +16,6 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Accept client connections from Gitea
     - from:
         - podSelector:
             matchLabels:
@@ -27,7 +24,6 @@ spec:
         - protocol: TCP
           port: 5432
   egress:
-    # pgpool routes queries to PostgreSQL nodes
     - to:
         - podSelector:
             matchLabels:
@@ -35,7 +31,6 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # DNS
     - to:
         - namespaceSelector:
             matchLabels:
@@ -49,7 +44,7 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# Allows repmgr replication and pgpool health checks between PostgreSQL nodes.
+# repmgr replication between PostgreSQL pods, plus queries from pgpool.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -66,7 +61,6 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Accept replication connections from peer PostgreSQL nodes (repmgr)
     - from:
         - podSelector:
             matchLabels:
@@ -74,7 +68,6 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Accept query routing from pgpool
     - from:
         - podSelector:
             matchLabels:
@@ -83,7 +76,6 @@ spec:
         - protocol: TCP
           port: 5432
   egress:
-    # Outbound replication to peer PostgreSQL nodes (repmgr streaming replication)
     - to:
         - podSelector:
             matchLabels:
@@ -91,7 +83,6 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # DNS
     - to:
         - namespaceSelector:
             matchLabels:
