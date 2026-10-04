@@ -30,6 +30,14 @@
   hosts: "{{ groups['control_plane'][0] }}"
   become: true
   tasks:
+    # Re-runs must never rotate the cluster token: joined nodes and anything
+    # that saved it would lose access. Checksum before, compare after 01.
+    - name: Checksum the existing K3s token (re-runs only)
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/token
+        checksum_algorithm: sha256
+      register: token_before
+
     # No `creates:` guard: the script is idempotent and re-runs every deploy.
     - name: Run 01-bootstrap-first-master.sh
       ansible.builtin.command:
@@ -44,14 +52,32 @@
       ansible.builtin.debug:
         msg: '{{ bootstrap_result.stdout_lines[-20:] }}'
 
+    - name: Checksum the K3s token after bootstrap
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/token
+        checksum_algorithm: sha256
+      register: token_after
+
+    - name: Fail if the bootstrap changed the K3s token
+      ansible.builtin.assert:
+        that: token_after.stat.checksum == token_before.stat.checksum
+        fail_msg: >-
+          /var/lib/rancher/k3s/server/token changed during this run. Existing
+          nodes can no longer join with the old token; investigate before
+          re-running.
+        quiet: true
+      when: token_before.stat.exists
+
     - name: Get K3s node token
       ansible.builtin.slurp:
         src: /var/lib/rancher/k3s/server/node-token
       register: node_token
+      no_log: true
 
     - name: Save node token
       ansible.builtin.set_fact:
         k3s_node_token: '{{ node_token.content | b64decode | trim }}'
+      no_log: true
 
 - name: Join additional control plane nodes (one at a time - etcd)
   hosts: "{{ groups['control_plane'][1:] }}"
@@ -126,6 +152,7 @@
       ansible.builtin.slurp:
         src: /etc/rancher/k3s/k3s.yaml
       register: kubeconfig_content
+      no_log: true # holds the cluster-admin client key
 
     # VIP instead of a single master, so it survives loss of the first node.
     - name: Save kubeconfig locally (server = VIP)
@@ -135,6 +162,7 @@
         content: "{{ kubeconfig_content.content | b64decode | regex_replace('127.0.0.1', k3s_vip) }}"
         dest: '{{ playbook_dir }}/../kubeconfig'
         mode: '0600'
+      no_log: true
 
     - name: Display success message
       ansible.builtin.debug:

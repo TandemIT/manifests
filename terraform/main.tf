@@ -113,6 +113,18 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
     tag    = var.vlan_tag
   }
 
+  # Public VLAN: no address. MetalLB answers ARP for the LoadBalancer IP here;
+  # Ansible brings the link up as "public0" (system-utils-install.yml).
+  dynamic "network" {
+    for_each = var.public_vlan_tag == null ? [] : [1]
+    content {
+      id     = 1
+      model  = "virtio"
+      bridge = var.bridge
+      tag    = var.public_vlan_tag
+    }
+  }
+
   serial {
     id   = 0
     type = "socket"
@@ -214,6 +226,18 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     tag    = var.vlan_tag
   }
 
+  # Public VLAN: no address. MetalLB answers ARP for the LoadBalancer IP here;
+  # Ansible brings the link up as "public0" (system-utils-install.yml).
+  dynamic "network" {
+    for_each = var.public_vlan_tag == null ? [] : [1]
+    content {
+      id     = 1
+      model  = "virtio"
+      bridge = var.bridge
+      tag    = var.public_vlan_tag
+    }
+  }
+
   serial {
     id   = 0
     type = "socket"
@@ -243,6 +267,19 @@ resource "proxmox_vm_qemu" "k3s_worker" {
       sshkeys,
     ]
   }
+}
+
+# MAC of each VM's public-VLAN NIC (network id 1), null when there is none.
+# Ansible matches on it to name the link "public0".
+locals {
+  control_plane_public_macs = [
+    for vm in proxmox_vm_qemu.k3s_control_plane :
+    try(lower(one([for n in vm.network : n.macaddr if n.id == 1])), null)
+  ]
+  worker_public_macs = [
+    for vm in proxmox_vm_qemu.k3s_worker :
+    try(lower(one([for n in vm.network : n.macaddr if n.id == 1])), null)
+  ]
 }
 
 # Rendered from the same variables as the VMs: one source for IPs, VIP and
@@ -290,13 +327,19 @@ resource "local_file" "ansible_inventory" {
           control_plane = {
             hosts = {
               for i, ip in local.control_plane_ips :
-              "k3s-cp-${i + 1}" => { ansible_host = ip }
+              "k3s-cp-${i + 1}" => merge(
+                { ansible_host = ip },
+                local.control_plane_public_macs[i] == null ? {} : { public_mac = local.control_plane_public_macs[i] },
+              )
             }
           }
           workers = {
             hosts = {
               for i, ip in local.worker_ips :
-              "k3s-worker-${i + 1}" => { ansible_host = ip }
+              "k3s-worker-${i + 1}" => merge(
+                { ansible_host = ip },
+                local.worker_public_macs[i] == null ? {} : { public_mac = local.worker_public_macs[i] },
+              )
             }
           }
         }

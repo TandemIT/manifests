@@ -1,0 +1,14 @@
+# Managed by Ansible (system-utils-install.yml).
+# Public-VLAN NIC: link up, no address of any kind. MetalLB (L2) answers ARP
+# for the LoadBalancer IP on it; nothing else lives on this VLAN.
+network:
+  version: 2
+  ethernets:
+    public0:
+      match:
+        macaddress: "{{ public_mac }}"
+      set-name: public0
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      link-local: []

@@ -78,6 +78,20 @@ variable "vlan_tag" {
   default     = 0
 }
 
+# Second, address-less NIC on every VM for the MetalLB public IP.
+# null = no second NIC; 0 = untagged (the switch port's native VLAN);
+# 1-4094 = that VLAN tag.
+variable "public_vlan_tag" {
+  description = "VLAN of the MetalLB public IP's NIC: null = none, 0 = untagged/native, N = tag N"
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.public_vlan_tag == null ? true : var.public_vlan_tag >= 0 && var.public_vlan_tag <= 4094
+    error_message = "public_vlan_tag must be null, 0 (untagged) or 1-4094."
+  }
+}
+
 variable "gateway" {
   description = "Network gateway"
   type        = string

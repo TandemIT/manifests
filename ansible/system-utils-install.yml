@@ -58,6 +58,32 @@
         - apt-daily.timer
         - apt-daily-upgrade.timer
 
+    # public_mac comes from the inventory (terraform public_vlan_tag > 0).
+    - name: Configure the public-VLAN NIC (up, no address)
+      ansible.builtin.template:
+        src: 60-public0.yaml.j2
+        dest: /etc/netplan/60-public0.yaml
+        owner: root
+        group: root
+        mode: '0600'
+      register: public_nic
+      when: public_mac is defined
+      tags: [public-nic]
+
+    - name: Apply netplan (renames the NIC to public0 and brings it up)
+      ansible.builtin.command: netplan apply
+      when: public_nic is changed
+      tags: [public-nic]
+
+    - name: Check public0 is up with no addresses
+      ansible.builtin.command: ip -o addr show dev public0
+      register: public0_addrs
+      changed_when: false
+      failed_when: >-
+        public0_addrs.rc != 0 or public0_addrs.stdout | length > 0
+      when: public_mac is defined
+      tags: [public-nic]
+
     - name: Display system utilities status
       ansible.builtin.debug:
         msg: 'System utilities installed: QEMU guest agent, micro editor, and unattended-upgrades'
