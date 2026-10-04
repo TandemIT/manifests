@@ -110,6 +110,7 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
     id     = 0
     model  = "virtio"
     bridge = var.bridge
+    tag    = var.vlan_tag
   }
 
   # Console access
@@ -123,11 +124,14 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   nameserver   = var.nameserver
   searchdomain = var.searchdomain
 
+  # Vendor data merges with the ciuser/ipconfig0/... settings below.
+  cicustom = var.cloudinit_vendor_snippet == "" ? null : "vendor=${var.cloudinit_vendor_snippet}"
+
   ciuser     = "ubuntu"
   cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
-  # clone/full_clone/vmid/efidisk changes force a destroy+create of the VM
+  # clone/full_clone/vmid/efidisk/cicustom changes force a destroy+create of the VM
   # (provider ForceNew), which with count hits every node at once. They only
   # matter at creation: a new template applies to newly added nodes, and
   # existing nodes are rebuilt deliberately, one at a time
@@ -138,6 +142,7 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
       full_clone,
       vmid,
       efidisk,
+      cicustom,
       network,
       ciuser,
       sshkeys,
@@ -211,6 +216,7 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     id     = 0
     model  = "virtio"
     bridge = var.bridge
+    tag    = var.vlan_tag
   }
 
   # Console access
@@ -224,11 +230,14 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   nameserver   = var.nameserver
   searchdomain = var.searchdomain
 
+  # Vendor data merges with the ciuser/ipconfig0/... settings below.
+  cicustom = var.cloudinit_vendor_snippet == "" ? null : "vendor=${var.cloudinit_vendor_snippet}"
+
   ciuser     = "ubuntu"
   cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
-  # clone/full_clone/vmid/efidisk changes force a destroy+create of the VM
+  # clone/full_clone/vmid/efidisk/cicustom changes force a destroy+create of the VM
   # (provider ForceNew), which with count hits every node at once. They only
   # matter at creation: a new template applies to newly added nodes, and
   # existing nodes are rebuilt deliberately, one at a time
@@ -239,6 +248,7 @@ resource "proxmox_vm_qemu" "k3s_worker" {
       full_clone,
       vmid,
       efidisk,
+      cicustom,
       network,
       ciuser,
       sshkeys,

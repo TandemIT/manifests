@@ -48,6 +48,14 @@ variable "template_id" {
   default     = "ubuntu-24.04-cloud-tpl"
 }
 
+# A clone does not inherit the template's cicustom (the provider clears it),
+# so a vendor snippet set on the template never runs unless passed here.
+variable "cloudinit_vendor_snippet" {
+  description = "Cloud-init vendor snippet for new VMs, e.g. local:snippets/ubuntu-noble.yaml (empty = none)"
+  type        = string
+  default     = ""
+}
+
 variable "vm_id_start" {
   description = "First VM ID: control-plane nodes get vm_id_start+i, workers vm_id_start+100+i"
   type        = number
@@ -64,6 +72,12 @@ variable "bridge" {
   description = "Network bridge"
   type        = string
   default     = "vmbr0"
+}
+
+variable "vlan_tag" {
+  description = "VLAN tag on the VMs' network interface (0 = untagged)"
+  type        = number
+  default     = 0
 }
 
 variable "gateway" {
