@@ -3,9 +3,13 @@ kind: Kustomization
 
 namespace: gitea-runners
 
-commonAnnotations:
-  app.kubernetes.io/part-of: ci-runners
-  app.kubernetes.io/managed-by: kustomize
+# Metadata labels only: commonLabels would also rewrite selectors, and a
+# Deployment's selector is immutable.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: ci-runners
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
 
 resources:
   - namespace.yaml
