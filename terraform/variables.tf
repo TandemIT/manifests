@@ -78,9 +78,7 @@ variable "vlan_tag" {
   default     = 0
 }
 
-# Second, address-less NIC on every VM for the MetalLB public IP.
-# null = no second NIC; 0 = untagged (the switch port's native VLAN);
-# 1-4094 = that VLAN tag.
+# Only new VMs get the NIC: network is in ignore_changes (main.tf).
 variable "public_vlan_tag" {
   description = "VLAN of the MetalLB public IP's NIC: null = none, 0 = untagged/native, N = tag N"
   type        = number

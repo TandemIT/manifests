@@ -226,8 +226,7 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     tag    = var.vlan_tag
   }
 
-  # Public VLAN: no address. MetalLB answers ARP for the LoadBalancer IP here;
-  # Ansible brings the link up as "public0" (system-utils-install.yml).
+  # See k3s_control_plane.
   dynamic "network" {
     for_each = var.public_vlan_tag == null ? [] : [1]
     content {
