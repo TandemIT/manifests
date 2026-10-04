@@ -153,8 +153,7 @@ gitea:
 
     security:
       INSTALL_LOCK: "true"
-
-    webhook:
+      # Moved from [webhook] (deprecated fallback, removed in Gitea 28).
       ALLOWED_HOST_LIST: "*.svc.cluster.local"
 
     # Default backend for LFS, packages, Actions artifacts/logs, attachments,
