@@ -31,6 +31,14 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+    # Infra runner: runner protocol, git, and the OpenTofu state backend.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea-runners-infra
+      ports:
+        - protocol: TCP
+          port: 3000
     # PENDING kedacore/keda#8087: KEDA polling Gitea for queued jobs
     # (apps/gitea-runner/scaledobject.yaml checklist item 6).
     # - from:

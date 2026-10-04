@@ -148,10 +148,12 @@
       changed_when: true
       when: cp_live_peers | length == 0 and not (k3s_already_joined | bool)
 
+    # The summary holds the K3s join token and the Argo CD admin password:
+    # never in CI logs (.gitea/workflows/deploy.yml sets CI=true).
     - name: Show bootstrap summary
       ansible.builtin.debug:
         msg: '{{ bootstrap_result.stdout_lines[-20:] }}'
-      when: bootstrap_result is not skipped
+      when: bootstrap_result is not skipped and lookup('env', 'CI') != 'true'
 
     - name: Checksum the K3s token after bootstrap
       ansible.builtin.stat:

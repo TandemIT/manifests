@@ -1,0 +1,67 @@
+# runner and dind share the pod, so this also limits the deploy job's
+# containers. Beyond the shared runners' egress, this pod reaches the hosts
+# deploy.sh manages. Addresses match terraform.tfvars (gitignored) - keep both
+# in sync if Proxmox or the node subnet move.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runner-infra-guardrails
+  labels:
+    app.kubernetes.io/name: gitea-runner-infra
+spec:
+  podSelector:
+    matchLabels:
+      app: gitea-runner-infra
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules: nothing connects to the runner.
+  egress:
+    # Gitea API (runner protocol, state backend) and git over HTTP.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Image pulls, apt, GitHub (actions, node git clones are on the nodes).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+    # Proxmox API (proxmox_api_url).
+    - to:
+        - ipBlock:
+            cidr: 172.16.1.38/32
+      ports:
+        - protocol: TCP
+          port: 8006
+    # Nodes: SSH for Ansible, K3s API via the VIP (172.16.10.50) and nodes.
+    - to:
+        - ipBlock:
+            cidr: 172.16.10.0/24
+      ports:
+        - protocol: TCP
+          port: 22
+        - protocol: TCP
+          port: 6443

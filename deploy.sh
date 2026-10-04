@@ -29,10 +29,36 @@ if [ -z "${TF_VAR_vm_password:-}" ]; then
     exit 1
 fi
 
-# TF_BIN=... picks one when both are installed (e.g. for pre-tofu state).
-TF_BIN="${TF_BIN:-$(command -v tofu || command -v terraform || true)}"
+if [ -z "${TF_VAR_state_passphrase:-}" ]; then
+    echo -e "${RED}Error: TF_VAR_state_passphrase is not set!${NC}"
+    echo "export TF_VAR_state_passphrase='<at least 16 chars>' (decrypts the OpenTofu state)"
+    exit 1
+fi
+
+# State lives in Gitea's package registry (terraform/main.tf backend "http").
+# Without Gitea (first bootstrap, rebuild) terraform/backend_override.tf
+# switches to a local file instead: COMMANDS.md, State.
+if [ -f terraform/backend_override.tf ]; then
+    echo -e "${YELLOW}terraform/backend_override.tf present: state is NOT in Gitea this run.${NC}"
+else
+    for v in TF_HTTP_ADDRESS TF_HTTP_USERNAME TF_HTTP_PASSWORD; do
+        if [ -z "${!v:-}" ]; then
+            echo -e "${RED}Error: ${v} is not set!${NC}"
+            echo "TF_HTTP_ADDRESS=https://git.open-ict.hu/api/packages/Cloud-Infra/terraform/state/k3s-proxmox"
+            echo "TF_HTTP_USERNAME / TF_HTTP_PASSWORD: a Gitea user and token with write:package"
+            echo "No Gitea yet (first bootstrap or rebuild)? See COMMANDS.md, State."
+            exit 1
+        fi
+    done
+    export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+fi
+
+# OpenTofu only: terraform/main.tf uses state encryption, which Terraform
+# doesn't support. TF_BIN=... picks a specific tofu binary.
+TF_BIN="${TF_BIN:-$(command -v tofu || true)}"
 if [ -z "${TF_BIN}" ]; then
-    echo -e "${RED}Error: neither tofu nor terraform found. Run ./setup.sh first.${NC}"
+    echo -e "${RED}Error: tofu not found. Run ./setup.sh first.${NC}"
     exit 1
 fi
 echo -e "Using IaC binary: ${GREEN}${TF_BIN}${NC}"
@@ -56,7 +82,24 @@ fi
 
 step "Step 1: Provisioning VMs (also generates ansible/inventory.yml)"
 "${TF_BIN}" -chdir=terraform init -input=false
-"${TF_BIN}" -chdir=terraform apply -input=false -auto-approve
+# Saved plan, checked before applying: deleting or replacing a VM takes
+# nodes down (all affected count instances at once, CLAUDE.md), so it is
+# refused unless ALLOW_VM_DESTROY=true. The plan file holds secrets in
+# plaintext; it lives in a private temp dir and is removed on exit.
+PLAN_DIR="$(mktemp -d)"
+trap 'rm -rf "${PLAN_DIR}"' EXIT
+"${TF_BIN}" -chdir=terraform plan -input=false -out="${PLAN_DIR}/tfplan"
+vm_destroys=$("${TF_BIN}" -chdir=terraform show -json "${PLAN_DIR}/tfplan" | jq -r '
+    .resource_changes[]?
+    | select(.type == "proxmox_vm_qemu" and (.change.actions | index("delete")))
+    | "\(.address) (\(.change.actions | join("+")))"')
+if [ -n "${vm_destroys}" ] && [ "${ALLOW_VM_DESTROY:-}" != "true" ]; then
+    echo -e "${RED}Refusing: this plan deletes or replaces VMs:${NC}"
+    echo "${vm_destroys}"
+    echo "Rebuild nodes one at a time (CLAUDE.md, terraform/), or set ALLOW_VM_DESTROY=true."
+    exit 1
+fi
+"${TF_BIN}" -chdir=terraform apply -input=false "${PLAN_DIR}/tfplan"
 
 CONTROL_PLANE_IP=$("${TF_BIN}" -chdir=terraform output -json control_plane_ips | jq -r '.[0]')
 mapfile -t ALL_NODE_IPS < <("${TF_BIN}" -chdir=terraform output -json control_plane_ips | jq -r '.[]'; \
@@ -110,8 +153,13 @@ while :; do
 done
 kubectl get applications -n argocd 2>/dev/null || true
 
-ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "<not yet created>")
+# Never print it in CI (.gitea/workflows/deploy.yml): job logs are readable.
+if [ "${CI:-}" = "true" ]; then
+    ARGOCD_PASS="<hidden in CI: kubectl -n argocd get secret argocd-initial-admin-secret>"
+else
+    ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
+      -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "<not yet created>")
+fi
 
 echo -e "\n${GREEN}================================${NC}"
 echo -e "${GREEN}Deployment Complete${NC}"

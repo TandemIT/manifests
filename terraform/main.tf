@@ -1,5 +1,37 @@
 terraform {
-  required_version = ">= 1.6"
+  # 1.8: variables in the encryption block.
+  required_version = ">= 1.8"
+
+  # Gitea's OpenTofu state registry, private org Cloud-Infra. The address and
+  # credentials come from TF_HTTP_ADDRESS / TF_HTTP_USERNAME /
+  # TF_HTTP_PASSWORD (deploy.sh derives the lock addresses).
+  # This puts the state inside the cluster it manages: scripts/07-pull-state.sh
+  # keeps the off-cluster copy, and COMMANDS.md covers a rebuild without Gitea.
+  backend "http" {
+    lock_method   = "POST"
+    unlock_method = "DELETE"
+  }
+
+  # Client-side encryption: Gitea and its S3 backend only ever see ciphertext.
+  # The passphrase (TF_VAR_state_passphrase) is the only way to read the state.
+  encryption {
+    key_provider "pbkdf2" "state" {
+      passphrase = var.state_passphrase
+    }
+    method "aes_gcm" "state" {
+      keys = key_provider.pbkdf2.state
+    }
+    # Reads the pre-encryption local state once, during the migration to the
+    # http backend. Remove after that migration (COMMANDS.md).
+    method "unencrypted" "migrate" {}
+    state {
+      method   = method.aes_gcm.state
+      enforced = true
+      fallback {
+        method = method.unencrypted.migrate
+      }
+    }
+  }
 
   required_providers {
     proxmox = {

@@ -98,6 +98,78 @@ kubectl delete job garage-bootstrap -n garage
 ```bash
 kubectl get deployment gitea-runner -n gitea-runners
 kubectl get secret gitea-runner-registration -n gitea-runners -o jsonpath='{.data.token}' | base64 -d
+
+# Infra runner (Cloud-Infra org only, label "infra"); re-mint its token:
+kubectl get deployment gitea-runner-infra -n gitea-runners-infra
+kubectl delete secret gitea-runner-infra-registration -n gitea-runners-infra
+kubectl delete job runner-infra-token-bootstrap -n gitea-runners-infra
+```
+
+## State
+
+The OpenTofu state is in Gitea's package registry (org `Cloud-Infra`,
+package `k3s-proxmox`), encrypted with `TF_VAR_state_passphrase` before it
+leaves the machine. Settings for every `tofu`/`deploy.sh` run:
+
+```bash
+export TF_VAR_state_passphrase='...'
+export TF_HTTP_ADDRESS=https://git.open-ict.hu/api/packages/Cloud-Infra/terraform/state/k3s-proxmox
+export TF_HTTP_USERNAME=<gitea user> TF_HTTP_PASSWORD=<token with write:package>
+export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock" TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+```
+
+```bash
+# Off-cluster copy (encrypted as stored) into state-backups/, after every apply
+bash scripts/07-pull-state.sh
+
+# Stuck lock (a deploy killed mid-apply): check nothing is running first
+tofu -chdir=terraform force-unlock <lock id from the error>
+```
+
+One-time move from the old local `terraform/terraform.tfstate` (unencrypted)
+to Gitea: the `unencrypted "migrate"` fallback in `terraform/main.tf` reads it.
+
+```bash
+tofu -chdir=terraform init -migrate-state      # answer yes
+tofu -chdir=terraform state list               # same resources as before
+bash scripts/07-pull-state.sh                  # confirms the stored state is encrypted
+# then delete terraform/terraform.tfstate*, and remove the "migrate" method
+# and its fallback from terraform/main.tf in a follow-up commit
+```
+
+Rebuild with no Gitea (first bootstrap, cluster lost): use a local copy.
+
+```bash
+cat > terraform/backend_override.tf <<'EOF'
+terraform {
+  backend "local" {}
+}
+EOF
+cp state-backups/<latest>.tfstate terraform/terraform.tfstate   # skip on a first bootstrap
+tofu -chdir=terraform init -reconfigure
+./deploy.sh
+# Restore gitea-app-secrets (Backups) before restoring the database. Once
+# Gitea is back and Cloud-Infra exists, move the state back:
+rm terraform/backend_override.tf
+tofu -chdir=terraform init -migrate-state
+```
+
+### Deploy workflow (`.gitea/workflows/deploy.yml`)
+
+Runs `deploy.sh` on the infra runner for every push to master of the
+`Cloud-Infra` repo, a pull mirror of this GitHub repo (a mirror sync counts as
+a push). Once, in that repo's Settings:
+
+- Actions enabled; mirror interval as short as you want deploys to lag GitHub.
+- Secrets `VM_PASSWORD`, `STATE_PASSPHRASE`, `STATE_TOKEN`, `TFVARS`
+  (whole `terraform.tfvars`), `SSH_PRIVATE_KEY`; variable `STATE_USER`.
+- `STATE_TOKEN` belongs to a bot account (or user) in a `Cloud-Infra` team
+  with package write, scope `write:package`. The job's own token can only read
+  packages in Gitea 28.
+
+```bash
+# Force a run without waiting for the mirror interval: sync the mirror
+curl -X POST -u "<user>:<token>" https://git.open-ict.hu/api/v1/repos/Cloud-Infra/<repo>/mirror-sync
 ```
 
 ## Backups
@@ -191,6 +263,11 @@ This deletes the app namespaces and their data (PVCs). The bootstrap and
 OIDC/LDAP secrets are saved first and restored at the end, so Argo CD brings
 the apps back on its own. The runner token and Garage S3 keys are minted
 again by the bootstrap Jobs.
+
+Gitea's database goes too: the OpenTofu state, the `Cloud-Infra` mirror repo
+and its Actions secrets. The script refuses to run without a
+`state-backups/` copy (`scripts/07-pull-state.sh`). Afterwards, move the state
+back (State) and set the repo up again (Deploy workflow).
 
 ## Uninstall K3s
 

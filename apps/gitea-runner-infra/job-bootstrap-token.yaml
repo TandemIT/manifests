@@ -1,0 +1,84 @@
+# Wave 0: creates the private Cloud-Infra org if it doesn't exist yet (a fresh
+# bootstrap has none) and mints an org-scoped runner registration token.
+# Re-mint: delete Secret gitea-runner-infra-registration and this Job;
+# Argo CD recreates the Job (COMMANDS.md, Runners).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: runner-infra-token-bootstrap
+  labels:
+    app.kubernetes.io/name: runner-infra-token-bootstrap
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+spec:
+  backoffLimit: 20
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: runner-infra-token-bootstrap
+    spec:
+      serviceAccountName: runner-infra-token-bootstrap
+      restartPolicy: OnFailure
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: alpine/k8s:1.32.3
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              set -o pipefail
+              GITEA=http://gitea-http.gitea.svc.cluster.local:3000
+              ORG=Cloud-Infra
+              echo "Waiting for the Gitea API..."
+              until curl -sf "${GITEA}/api/healthz" >/dev/null; do sleep 5; done
+
+              ADMIN_USER=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.username}' | base64 -d)
+              ADMIN_PASS=$(kubectl get secret gitea-admin -n gitea -o jsonpath='{.data.password}' | base64 -d)
+              api() { curl -sf -u "${ADMIN_USER}:${ADMIN_PASS}" -H 'Content-Type: application/json' "$@"; }
+
+              # The org holds the OpenTofu state package: anyone who can read
+              # its packages can read the (encrypted) state, so never public.
+              code=$(curl -s -o /tmp/org.json -w '%{http_code}' -u "${ADMIN_USER}:${ADMIN_PASS}" "${GITEA}/api/v1/orgs/${ORG}")
+              case "${code}" in
+                200) ;;
+                404)
+                  api -X POST "${GITEA}/api/v1/admin/users/${ADMIN_USER}/orgs" \
+                    -d "{\"username\":\"${ORG}\",\"visibility\":\"private\"}" -o /tmp/org.json
+                  echo "Created private org ${ORG}"
+                  ;;
+                *) echo "GET org ${ORG}: HTTP ${code}"; exit 1 ;;
+              esac
+              visibility=$(jq -r .visibility /tmp/org.json)
+              if [ "${visibility}" = "public" ]; then
+                echo "ERROR: org ${ORG} is public; make it private before the infra runner registers."
+                exit 1
+              fi
+
+              current=$(kubectl get secret gitea-runner-infra-registration -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
+              if [ -z "${current}" ]; then
+                token=$(api -X POST "${GITEA}/api/v1/orgs/${ORG}/actions/runners/registration-token" | jq -r .token)
+                { [ -n "${token}" ] && [ "${token}" != "null" ]; } || { echo "No token returned"; exit 1; }
+                kubectl create secret generic gitea-runner-infra-registration \
+                  --from-literal=token="${token}" \
+                  --dry-run=client -o yaml | kubectl apply -f -
+                echo "Minted: gitea-runner-infra-registration (org ${ORG})"
+              else
+                echo "Exists: gitea-runner-infra-registration"
+              fi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi

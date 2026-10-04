@@ -30,6 +30,7 @@ spec:
             - /bin/bash
             - -ec
             - |
+              set -o pipefail
               GITEA=http://gitea-http.gitea.svc.cluster.local:3000
               echo "Waiting for the Gitea API..."
               until curl -sf "${GITEA}/api/healthz" >/dev/null; do sleep 5; done
@@ -42,7 +43,7 @@ spec:
                 ""|placeholder*)
                   token=$(curl -sf -X POST -u "${ADMIN_USER}:${ADMIN_PASS}" \
                     "${GITEA}/api/v1/admin/actions/runners/registration-token" | jq -r .token)
-                  [ -n "${token}" ] && [ "${token}" != "null" ]
+                  { [ -n "${token}" ] && [ "${token}" != "null" ]; } || { echo "No token returned"; exit 1; }
                   kubectl create secret generic gitea-runner-registration \
                     --from-literal=token="${token}" \
                     --dry-run=client -o yaml | kubectl apply -f -
@@ -63,7 +64,7 @@ spec:
               #       -H 'Content-Type: application/json' \
               #       -d '{"name":"keda-scaler","scopes":["read:admin"]}' \
               #       "${GITEA}/api/v1/users/${ADMIN_USER}/tokens" | jq -r .sha1)
-              #     [ -n "${token}" ] && [ "${token}" != "null" ]
+              #     { [ -n "${token}" ] && [ "${token}" != "null" ]; } || { echo "No token returned"; exit 1; }
               #     kubectl create secret generic gitea-api-token \
               #       --from-literal=token="${token}" \
               #       --dry-run=client -o yaml | kubectl apply -f -

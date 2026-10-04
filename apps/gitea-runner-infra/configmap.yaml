@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitea-runner-infra-config
+data:
+  config.yaml: |
+    log:
+      level: info
+
+    runner:
+      file: /data/.runner
+      # One deploy at a time: deploy.sh and the state lock aren't meant to race.
+      capacity: 1
+      timeout: 3h
+      shutdown_timeout: 3600s
+      insecure: false
+      fetch_timeout: 5s
+      fetch_interval: 2s
+      fetch_interval_max: 60s
+
+    cache:
+      enabled: false
+
+    container:
+      network: ""
+      privileged: false
+      options: ""
+      workdir_parent: ""
+      # No host volumes: jobs get the workspace and nothing else.
+      valid_volumes: []
+      docker_host: tcp://127.0.0.1:2375
+      force_pull: true
+      force_rebuild: false
+      require_docker: true
+      docker_timeout: 300s
+      bind_workdir: false
+
+    # Only for the kubelet probes; nothing scrapes it (no ingress allowed).
+    metrics:
+      enabled: true
+      addr: 0.0.0.0:9101

@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitea-runner-infra
+  labels:
+    app.kubernetes.io/name: gitea-runner-infra
+  annotations:
+    # After the token Job (wave 0).
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  # One runner, capacity 1: deploys never run in parallel.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitea-runner-infra
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: gitea-runner-infra
+        app.kubernetes.io/name: gitea-runner-infra
+        app.kubernetes.io/part-of: ci-runners
+    spec:
+      serviceAccountName: gitea-runner-infra
+      automountServiceAccountToken: false
+      # Above shutdown_timeout (3600s, configmap.yaml) so a draining job isn't killed.
+      terminationGracePeriodSeconds: 3660
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runner
+          # gitea/act_runner is deprecated in favour of gitea/runner; the
+          # binary is now gitea-runner. https://gitea.com/gitea/runner
+          image: gitea/runner:3.5.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: GITEA_INSTANCE_URL
+              value: http://gitea-http.gitea.svc.cluster.local:3000
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-runner-infra-registration
+                  key: token
+            - name: GITEA_RUNNER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          # Registers on every container start, not in an initContainer: an
+          # ephemeral runner exits after one job and Gitea drops its
+          # registration, and only this container restarts. The label image
+          # is a default; the deploy workflow pins its own container image.
+          command:
+            - sh
+            - -ec
+            - |
+              rm -f /data/.runner
+              gitea-runner -c /config/config.yaml register --ephemeral --no-interactive \
+                --instance "${GITEA_INSTANCE_URL}" \
+                --token "${GITEA_RUNNER_REGISTRATION_TOKEN}" \
+                --name "${GITEA_RUNNER_NAME}" \
+                --labels "infra:docker://debian:bookworm-slim"
+              until wget -qO- http://127.0.0.1:2375/_ping 2>/dev/null; do sleep 1; done
+              exec gitea-runner -c /config/config.yaml daemon
+          ports:
+            - name: metrics
+              containerPort: 9101
+          startupProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /.cache
+        - name: dind
+          image: docker:27-dind
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: false
+            # The pod's RuntimeDefault blocks mount/unshare, which dockerd
+            # needs even when privileged.
+            seccompProfile:
+              type: Unconfined
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          args:
+            # No --host: the entrypoint already binds tcp://0.0.0.0:2375. The
+            # runner reaches it on 127.0.0.1.
+            - --storage-driver=vfs
+            # Flannel VXLAN overlay MTU; 1500 stalls large TLS downloads.
+            - --mtu=1450
+          lifecycle:
+            # The job (tofu apply) runs in a container inside dockerd: keep
+            # dockerd up until it finishes, so a rollout or node drain can't
+            # kill a deploy mid-apply and leave the state locked. Bounded by
+            # terminationGracePeriodSeconds.
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - while [ -n "$(docker -H tcp://127.0.0.1:2375 ps -q)" ]; do sleep 5; done
+          # Job containers run in this container's cgroup: tofu, the Proxmox
+          # provider and Ansible's forks all count here.
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+              ephemeral-storage: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+              ephemeral-storage: 6Gi
+          volumeMounts:
+            - name: docker-data
+              mountPath: /var/lib/docker
+      volumes:
+        - name: config
+          configMap:
+            name: gitea-runner-infra-config
+        - name: data
+          emptyDir: {}
+        - name: docker-data
+          emptyDir:
+            sizeLimit: 6Gi
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}

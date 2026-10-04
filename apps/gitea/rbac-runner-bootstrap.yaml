@@ -1,4 +1,4 @@
-# Lets the runner-token-bootstrap Job (gitea-runners) read gitea-admin. Lives
+# Lets the runner token Jobs (gitea-runners, gitea-runners-infra) read gitea-admin. Lives
 # here because the gitea-runner kustomization rewrites every namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -28,3 +28,6 @@ subjects:
   - kind: ServiceAccount
     name: runner-token-bootstrap
     namespace: gitea-runners
+  - kind: ServiceAccount
+    name: runner-infra-token-bootstrap
+    namespace: gitea-runners-infra

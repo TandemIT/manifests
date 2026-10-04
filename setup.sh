@@ -23,13 +23,11 @@ chmod +x deploy.sh setup.sh 2>/dev/null || true
 
 echo -e "\n${GREEN}Checking prerequisites...${NC}"
 
-# An existing Terraform works too (deploy.sh prefers tofu).
+# OpenTofu only (>= 1.8): terraform/main.tf uses state encryption.
 if command -v tofu &> /dev/null; then
     echo -e "${GREEN}[ok] OpenTofu: $(tofu version | head -n1)${NC}"
-elif command -v terraform &> /dev/null; then
-    echo -e "${GREEN}[ok] Terraform: $(terraform version | head -n1) (OpenTofu also works - deploy.sh prefers tofu if installed)${NC}"
 else
-    echo -e "${YELLOW}[--] Neither tofu nor terraform found. Installing OpenTofu...${NC}"
+    echo -e "${YELLOW}[--] tofu not found. Installing OpenTofu...${NC}"
     curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh
     chmod +x /tmp/install-opentofu.sh
     /tmp/install-opentofu.sh --install-method deb

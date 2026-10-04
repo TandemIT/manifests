@@ -22,6 +22,18 @@ variable "ssh_public_key" {
   default     = "YOUR_SSH_PUBLIC_KEY_HERE"
 }
 
+variable "state_passphrase" {
+  description = "Passphrase for OpenTofu state encryption - set via TF_VAR_state_passphrase. Losing it makes the state unreadable."
+  type        = string
+  sensitive   = true
+  nullable    = false
+
+  validation {
+    condition     = length(var.state_passphrase) >= 16
+    error_message = "state_passphrase must be at least 16 characters (pbkdf2 requirement)."
+  }
+}
+
 variable "vm_password" {
   description = "Password for the cloud-init user (ubuntu) on every VM - set via TF_VAR_vm_password"
   type        = string

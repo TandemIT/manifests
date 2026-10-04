@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Deletes the cert-manager, traefik, anubis, gitea, gitea-runners and garage
+# Deletes the cert-manager, traefik, anubis, gitea, gitea-runners(-infra) and garage
 # namespaces (PVCs included) plus Traefik/cert-manager cluster-scoped leftovers.
 # Argo CD and its Applications are untouched, so Argo CD recreates the apps.
 # The scripts/01 and scripts/06 secrets are saved first and restored at the
 # end; the runner tokens go back as placeholders, and the Garage S3 keys are
 # not kept, because the fresh Gitea and Garage get theirs from the bootstrap Jobs.
+# Gitea's database goes too, and with it the OpenTofu state, the Cloud-Infra
+# repo and its Actions secrets: the script refuses to run without an
+# off-cluster state copy (scripts/07-pull-state.sh).
 
 set -euo pipefail
 
@@ -12,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib-functions.sh
 source "${SCRIPT_DIR}/lib-functions.sh"
 
-APP_NAMESPACES=(cert-manager traefik anubis gitea gitea-runners garage)
+APP_NAMESPACES=(cert-manager traefik anubis gitea gitea-runners gitea-runners-infra garage)
 TRAEFIK_CLUSTER_RESOURCES=(ingressclass/traefik clusterrole/traefik clusterrolebinding/traefik)
 CERT_MANAGER_CLUSTER_ISSUERS=(clusterissuer/letsencrypt-prod clusterissuer/letsencrypt-staging)
 # <namespace>/<name> of the scripts/01 secrets that Argo CD cannot recreate.
@@ -65,9 +68,21 @@ fi
 
 log "Preparing to reset application workloads..."
 
+# Gitea holds the OpenTofu state (terraform/main.tf), and the reset wipes
+# Gitea's database and Garage. Without an off-cluster copy the VMs become
+# unmanaged. -f doesn't skip this; SKIP_STATE_BACKUP_CHECK=true does.
+latest_state=$(ls -t "${SCRIPT_DIR}/../state-backups/"*.tfstate 2>/dev/null | head -n1 || true)
+if [[ "${SKIP_STATE_BACKUP_CHECK:-false}" != "true" ]]; then
+  [[ -n "${latest_state}" ]] \
+    || die "No state-backups/*.tfstate: run scripts/07-pull-state.sh first (the reset deletes the only in-cluster copy of the OpenTofu state)."
+  log "Newest off-cluster state copy: ${latest_state##*/} - make sure no apply ran after it."
+fi
+
 if [[ "${force}" != "true" ]]; then
   echo ""
-  warn "This will delete ALL application workloads in the cluster"
+  warn "This will delete ALL application workloads in the cluster, including the"
+  warn "OpenTofu state in Gitea and the Cloud-Infra repo with its Actions secrets."
+  warn "Afterwards: COMMANDS.md, State (move the state back) and Deploy workflow."
   read -r -p "Continue? (yes/no) " response
   if [[ ! "${response}" =~ ^[Yy][Ee][Ss]?$ ]]; then
     log "Cancelled"

@@ -10,7 +10,7 @@ reconciles everything else from this repository. Operational commands are in
 - **Nodes:** 3 control-plane + 3 worker VMs by default (`terraform/variables.tf`). kube-vip announces the API VIP `172.16.10.50:6443` via ARP.
 - **Edge:** MetalLB (L2) gives Traefik the public IP `145.89.192.138` (ports 80, 443, 2222) and announces it on `public0`, a second NIC with no address on the public VLAN. An nftables guard on `public0` admits only those ports (plus some ICMP) to that IP, and replies are policy-routed back out through `public_gateway`. `git.open-ict.hu` goes through Anubis to Gitea, except that clients in `145.89.192.0/24` and `172.16.0.0/12` bypass Anubis. SSH on 2222 goes straight to Gitea. `argo.git.open-ict.hu` is limited to RFC1918 sources.
 - **Gitea:** one replica, PostgreSQL HA (2 nodes + 2 pgpool), and a 6-pod Valkey cluster. LFS, packages, Actions artifacts, attachments, avatars and archives go to Garage (3-replica S3). Git repositories stay on Gitea's PVC.
-- **Runners:** a fixed 5-replica Deployment with a privileged dind sidecar. Each pod registers ephemerally on start and uses act_runner's default labels.
+- **Runners:** a fixed 5-replica Deployment with a privileged dind sidecar. Each pod registers ephemerally on start and uses act_runner's default labels. A separate single infra runner (label `infra`, `Cloud-Infra` org only) runs the deploy workflow in `.gitea/workflows/` and is the only pod that can reach Proxmox, node SSH and the K3s API.
 - **Two layers:** `platform/` (MetalLB, the CoreDNS override, and the kube-vip static-pod template) is applied once by `scripts/01`, outside Argo CD. Everything else is an Argo CD Application in `argocd/apps/` (app-of-apps).
 - **Secrets:** none are in git. Random secrets are created by `scripts/01`. Runtime tokens (runner registration, Garage S3 keys) are minted by in-cluster bootstrap Jobs. OIDC/LDAP credentials come from `terraform/terraform.tfvars` through `scripts/06-auth-providers.sh`.
 - **Self-maintenance:** unattended-upgrades installs OS updates, and kured reboots one node at a time (Mon-Fri 02:00-05:00). system-upgrade-controller applies K3s patch releases on the pinned minor channel (Mon-Fri 05:30-07:00). Three backup CronJobs upload to Garage nightly.
@@ -31,7 +31,8 @@ reconciles everything else from this repository. Operational commands are in
 | Gitea | 28.0.0 (chart 12.7.0: postgresql-ha 16.3.2, valkey-cluster 3.0.24) | `argocd/apps/gitea.yaml`, `apps/gitea/values.yaml` |
 | Garage | v1.0.0 | `apps/garage/statefulset.yaml` |
 | Anubis | v1.27.0 | `apps/anubis/deployment.yaml` |
-| Gitea runner | 3.5.0 | `apps/gitea-runner/deployment.yaml` |
+| Gitea runner | 3.5.0 | `apps/gitea-runner/deployment.yaml`, `apps/gitea-runner-infra/deployment.yaml` |
+| OpenTofu (CI), kubectl (CI) | 1.13.1, v1.32.3 | `.gitea/workflows/deploy.yml` (OpenTofu also `.claude/skills/validate/validate.sh`) |
 
 ## Prerequisites
 
@@ -52,6 +53,11 @@ your checkout: **push before you deploy**.
 ./setup.sh                        # checks/installs prerequisites, creates terraform/terraform.tfvars
 # edit terraform/terraform.tfvars, then push
 export TF_VAR_vm_password='...'   # cloud-init user password, min 12 chars; never in tfvars
+export TF_VAR_state_passphrase='...'   # decrypts the OpenTofu state, min 16 chars
+# State backend: Gitea's package registry (see COMMANDS.md, State, for a
+# first bootstrap, when there is no Gitea yet)
+export TF_HTTP_ADDRESS=https://git.open-ict.hu/api/packages/Cloud-Infra/terraform/state/k3s-proxmox
+export TF_HTTP_USERNAME=... TF_HTTP_PASSWORD=...   # Gitea user + token with write:package
 ./deploy.sh
 ```
 
@@ -77,7 +83,9 @@ sudo K3S_TOKEN='<token>' bash scripts/03-join-worker.sh         # each worker
 `VIP`, `K3S_VERSION` and `VIP_INTERFACE` (default: the default-route
 interface) can be overridden through the environment. Afterwards, run
 `bash scripts/06-auth-providers.sh` from a host that has the kubeconfig,
-`terraform/terraform.tfvars` and a `tofu -chdir=terraform init`.
+`terraform/terraform.tfvars` and a `tofu -chdir=terraform init`, with the
+state settings exported (`TF_VAR_state_passphrase` plus `TF_HTTP_*`, or a
+local `backend_override.tf`; COMMANDS.md, State).
 
 ### What happens next
 
@@ -95,14 +103,15 @@ installs Argo CD, and applies `argocd/root-app.yaml`. Argo CD syncs
 | 4 | `anubis`, `gitea-config` |
 | 5 | `garage`: its bootstrap Job mints the S3 credentials Gitea needs |
 | 6 | `gitea` |
-| 7 | `gitea-runner`: its bootstrap Job mints the registration token |
+| 7 | `gitea-runner`: its bootstrap Job mints the registration token; `gitea-runner-infra`: its Job creates the private `Cloud-Infra` org and mints an org-scoped token |
 
 ## Repository layout
 
 ```
-terraform/   Proxmox VMs + generated ansible/inventory.yml (OpenTofu, local state)
+terraform/   Proxmox VMs + generated ansible/inventory.yml (OpenTofu, encrypted state in Gitea)
 ansible/     node utilities; drives scripts/01..03 (no install logic of its own)
-scripts/     01 bootstrap, 02/03 join, 05 reset apps, 06 auth providers, lib-functions.sh
+scripts/     01 bootstrap, 02/03 join, 05 reset apps, 06 auth providers, 07 pull state, lib-functions.sh
+.gitea/      deploy workflow: deploy.sh on the infra runner, from the Cloud-Infra mirror
 platform/    network foundation, applied by scripts/01 (not Argo CD)
 argocd/      install/ (Argo CD itself), root-app.yaml, apps/ (one Application per component)
 apps/        manifests and Helm values per component
@@ -121,5 +130,7 @@ apps/        manifests and Helm values per component
 - Objects written to the Gitea PVC before Garage storage was configured were not migrated.
 - Runner autoscaling is waiting on an upstream KEDA Gitea scaler (see `apps/gitea-runner/scaledobject.yaml`).
 - The Argo CD allowlist covers all of RFC1918 until the VPN CIDR is known (`argocd/install/ip-allowlist.yaml`).
-- Terraform state is local, and `terraform/terraform.tfvars` is the only copy of the OIDC/LDAP credentials. Back both up.
+- The OpenTofu state lives in Gitea, inside the cluster it manages. It is encrypted client-side; `scripts/07-pull-state.sh` keeps the off-cluster copy and has to be run after every apply. Losing `TF_VAR_state_passphrase` makes every copy unreadable.
+- `terraform/terraform.tfvars` is the only copy of the OIDC/LDAP credentials, apart from the `TFVARS` Actions secret. Back it up.
+- The infra runner (`apps/gitea-runner-infra/`) can reach Proxmox, every node over SSH and the K3s API, and the deploy job holds cluster-admin and the Proxmox token. Anyone who can push to master of the Cloud-Infra repo, or of the GitHub repo it mirrors, controls the cluster.
 - The `gitea/gitea-app-secrets` Secret is the only copy of the key that decrypts Gitea data in the database backups, and no backup job captures it. Keep a copy off-cluster (COMMANDS.md, Backups).

@@ -4,7 +4,8 @@
 # existingSecret expects), deletes Secrets of removed providers, and
 # regenerates the non-secret apps/gitea/values-oidc.yaml / values-ldap.yaml.
 # deploy.sh runs it; re-run after editing the providers.
-# Needs kubectl, python3, tofu or terraform (TF_BIN=).
+# Needs kubectl, python3, tofu (TF_BIN=), and the state settings deploy.sh
+# checks (TF_VAR_state_passphrase, TF_HTTP_*): tofu console reads the state.
 
 set -euo pipefail
 
@@ -13,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib-functions.sh"
 
 MANIFESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TF_BIN="${TF_BIN:-$(command -v tofu || command -v terraform || true)}"
+TF_BIN="${TF_BIN:-$(command -v tofu || true)}"
 MANAGED_LABEL="app.kubernetes.io/managed-by=auth-providers"
 
 if [[ -z "${KUBECONFIG:-}" && -f "${MANIFESTS_DIR}/kubeconfig" ]]; then
@@ -21,7 +22,7 @@ if [[ -z "${KUBECONFIG:-}" && -f "${MANIFESTS_DIR}/kubeconfig" ]]; then
 fi
 
 require_binary kubectl python3
-[[ -n "${TF_BIN}" ]] || die "neither tofu nor terraform found"
+[[ -n "${TF_BIN}" ]] || die "tofu not found"
 require_cluster
 
 # Evaluates the variable from the config + terraform.tfvars (not from state,

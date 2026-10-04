@@ -1,0 +1,14 @@
+# One runner pod (runner + dind) plus the token Job.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gitea-runner-infra-guard
+  labels:
+    app.kubernetes.io/name: gitea-runner-infra
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    count/pods: "4"
