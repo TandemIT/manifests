@@ -1,6 +1,7 @@
 #!/usr/sbin/nft -f
 # Managed by Ansible (system-utils-install.yml). Own table: never flushes the
 # kube-proxy/flannel rules. Loaded by public0-nft.service.
+# Create-then-delete: reloads replace the table instead of failing or appending.
 table inet public0
 delete table inet public0
 

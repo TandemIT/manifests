@@ -156,4 +156,4 @@
 
     - name: Display system utilities status
       ansible.builtin.debug:
-        msg: 'System utilities installed: QEMU guest agent, micro editor, and unattended-upgrades'
+        msg: 'System utilities installed: QEMU guest agent, micro editor, unattended-upgrades{{ ", public0 NIC" if public_mac is defined else "" }}'
