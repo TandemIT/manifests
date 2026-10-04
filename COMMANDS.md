@@ -134,9 +134,12 @@ tofu -chdir=terraform apply -replace='proxmox_vm_qemu.k3s_worker[0]'   # or k3s_
 ./deploy.sh                                                            # rejoins the new VM; joined nodes are skipped
 ```
 
-Don't rebuild `k3s_control_plane[0]` this way. `deploy.sh` always runs
-`scripts/01` (`--cluster-init`) on that node, so a fresh VM there would start
-a new cluster.
+For `k3s_control_plane[0]`, `deploy.sh` checks whether another control plane
+answers on 6443. If one does, it deletes the stale node there (if you haven't
+already) and joins the fresh VM with `scripts/02`, using that peer's token. If
+none answers but a peer already has K3s, it stops rather than run `scripts/01`
+(`--cluster-init`). `-e k3s_force_bootstrap=true` on the `ansible-playbook`
+call overrides that.
 
 Changes to `public_vlan_tag` (and the NIC itself, on VMs created before it
 existed) reach only new VMs, so rebuild each existing node this way to get them.

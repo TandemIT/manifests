@@ -60,7 +60,7 @@ export TF_VAR_vm_password='...'   # cloud-init user password, min 12 chars; neve
 1. Runs `tofu apply` (or `terraform` if tofu is missing; override with `TF_BIN=`). This creates the VMs and renders `ansible/inventory.yml`.
 2. Waits for SSH on every node.
 3. Runs `ansible/system-utils-install.yml`: qemu-guest-agent, micro, unattended-upgrades, and the `public0` NIC (netplan, nftables guard, rp_filter).
-4. Runs `ansible/k3s-install.yml`. It clones the repo to `/opt/manifests` on every node, runs `scripts/01` on the first control plane, `02` on the other control planes one at a time, and `03` on the workers. It then writes `./kubeconfig`, pointed at the VIP.
+4. Runs `ansible/k3s-install.yml`. It clones the repo to `/opt/manifests` on every node, runs `scripts/01` on the first control plane (or `02` if that VM was rebuilt and the cluster is already running), `02` on the other control planes one at a time, and `03` on the workers. It then writes `./kubeconfig`, pointed at the VIP.
 5. Runs `scripts/06-auth-providers.sh` to push the OIDC/LDAP secrets.
 6. Waits up to 20 minutes for every Argo CD Application to be Synced and Healthy.
 

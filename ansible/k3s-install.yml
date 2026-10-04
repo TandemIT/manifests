@@ -30,6 +30,104 @@
   hosts: "{{ groups['control_plane'][0] }}"
   become: true
   tasks:
+    # A rebuilt first control plane must join the running cluster (02), not
+    # start a new one (01 runs --cluster-init). Decide per run:
+    #   k3s installed, joined earlier (--server in its unit)  -> skip
+    #   k3s installed, the original init node                 -> 01 (idempotent)
+    #   k3s missing, another control plane answers on 6443    -> join with 02
+    #   k3s missing, no peer answers, no peer has k3s         -> 01 (first install)
+    #   k3s missing, no peer answers, a peer has k3s or is unreachable -> stop
+    # -e k3s_force_bootstrap=true overrides the stop (e.g. a deliberate rebuild
+    # of the whole cluster).
+    - name: Check for an existing K3s install on this node
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Check whether this node joined an existing cluster earlier
+      ansible.builtin.command: grep -q -- '--server https://' /etc/systemd/system/k3s.service
+      register: k3s_joined_unit
+      changed_when: false
+      failed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Look for another control plane answering on 6443
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].ansible_host }}"
+        port: 6443
+        timeout: 5
+      loop: "{{ groups['control_plane'][1:] }}"
+      register: cp_peers
+      ignore_errors: true # a closed port is an answer, not a failure
+      when: not k3s_binary.stat.exists
+
+    - name: Choose bootstrap (01) or join (02)
+      ansible.builtin.set_fact:
+        cp_live_peers: >-
+          {{ cp_peers.results | default([]) | rejectattr('skipped', 'defined')
+             | rejectattr('failed') | map(attribute='item') | list }}
+        k3s_already_joined: "{{ k3s_binary.stat.exists and k3s_joined_unit.rc == 0 }}"
+
+    - name: Check whether the other control planes already run K3s (first install?)
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['control_plane'][1:] }}"
+      register: peer_k3s
+      ignore_unreachable: true
+      when: not k3s_binary.stat.exists and cp_live_peers | length == 0
+
+    - name: Stop instead of starting a second cluster
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} has no K3s and no other control plane answers
+          on 6443, but {{ peer_k3s_hosts | join(', ') }} already
+          {{ 'has' if peer_k3s_hosts | length == 1 else 'have' }} K3s or could not
+          be checked. Running 01 here would start a new cluster. Bring a control
+          plane back up and re-run, or pass -e k3s_force_bootstrap=true if a new
+          cluster is really intended.
+      vars:
+        peer_k3s_hosts: >-
+          {{ (peer_k3s.results | selectattr('unreachable', 'defined') | selectattr('unreachable')
+              | map(attribute='item') | list)
+             + (peer_k3s.results | selectattr('stat', 'defined') | selectattr('stat.exists')
+              | map(attribute='item') | list) }}
+      when:
+        - not k3s_binary.stat.exists
+        - cp_live_peers | length == 0
+        - not (k3s_force_bootstrap | default(false) | bool)
+        - peer_k3s_hosts | length > 0
+
+    # Deleting the node object also makes K3s drop its etcd member, so the
+    # rebuilt VM can rejoin under the same name. Node name = VM name (Terraform).
+    - name: Remove the rebuilt node's stale node object and etcd member
+      ansible.builtin.command: >-
+        k3s kubectl delete node {{ inventory_hostname }}
+        --ignore-not-found --wait=true --timeout=120s
+      delegate_to: "{{ cp_live_peers[0] }}"
+      register: stale_node
+      changed_when: "'deleted' in stale_node.stdout"
+      when: cp_live_peers | length > 0
+
+    - name: Read the join token from the running control plane
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      delegate_to: "{{ cp_live_peers[0] }}"
+      register: peer_token
+      no_log: true
+      when: cp_live_peers | length > 0
+
+    - name: Run 02-join-control-plane.sh (rebuilt into a running cluster)
+      ansible.builtin.command:
+        cmd: bash /opt/manifests/scripts/02-join-control-plane.sh
+        creates: /usr/local/bin/k3s
+      environment:
+        VIP: '{{ k3s_vip }}'
+        K3S_TOKEN: '{{ peer_token.content | b64decode | trim }}'
+        K3S_VERSION: '{{ k3s_version }}'
+      no_log: true # the environment holds the token
+      when: cp_live_peers | length > 0
+
     # Re-runs must never rotate the cluster token: joined nodes and anything
     # that saved it would lose access. Checksum before, compare after 01.
     - name: Checksum the existing K3s token (re-runs only)
@@ -37,6 +135,7 @@
         path: /var/lib/rancher/k3s/server/token
         checksum_algorithm: sha256
       register: token_before
+      when: cp_live_peers | length == 0 and not (k3s_already_joined | bool)
 
     # No `creates:` guard: the script is idempotent and re-runs every deploy.
     - name: Run 01-bootstrap-first-master.sh
@@ -47,16 +146,19 @@
         K3S_VERSION: '{{ k3s_version }}'
       register: bootstrap_result
       changed_when: true
+      when: cp_live_peers | length == 0 and not (k3s_already_joined | bool)
 
     - name: Show bootstrap summary
       ansible.builtin.debug:
         msg: '{{ bootstrap_result.stdout_lines[-20:] }}'
+      when: bootstrap_result is not skipped
 
     - name: Checksum the K3s token after bootstrap
       ansible.builtin.stat:
         path: /var/lib/rancher/k3s/server/token
         checksum_algorithm: sha256
       register: token_after
+      when: bootstrap_result is not skipped
 
     - name: Fail if the bootstrap changed the K3s token
       ansible.builtin.assert:
@@ -66,17 +168,27 @@
           nodes can no longer join with the old token; investigate before
           re-running.
         quiet: true
-      when: token_before.stat.exists
+      when: bootstrap_result is not skipped and token_before.stat.exists
+
+    - name: Wait for the API server on this node
+      ansible.builtin.wait_for:
+        port: 6443
+        delay: 5
+        timeout: 300
 
     - name: Get K3s node token
       ansible.builtin.slurp:
         src: /var/lib/rancher/k3s/server/node-token
       register: node_token
       no_log: true
+      when: cp_live_peers | length == 0
 
+    # After a rejoin, the later joins use the surviving peer's token too.
     - name: Save node token
       ansible.builtin.set_fact:
-        k3s_node_token: '{{ node_token.content | b64decode | trim }}'
+        k3s_node_token: >-
+          {{ (peer_token if cp_live_peers | length > 0 else node_token).content
+             | b64decode | trim }}
       no_log: true
 
 - name: Join additional control plane nodes (one at a time - etcd)
