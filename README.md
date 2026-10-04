@@ -544,6 +544,13 @@ This repository is organized to provide a clear separation between platform infr
 
 Provisions the VMs on Proxmox (Telmate provider, cloud-init clones of an Ubuntu template) and renders `ansible/inventory.yml` from the same variables, so addressing lives in one place (`terraform.tfvars`). Plain HCL — works with both OpenTofu and Terraform. State and tfvars are gitignored.
 
+An apply never rebuilds or reboots existing nodes on its own:
+
+- **Template, clone mode, VM ID and EFI disk** changes would make the provider destroy and recreate the VM — for every node at once. They are in `ignore_changes`, so they only apply to newly created nodes. Rebuild existing nodes deliberately, one at a time: drain, `tofu -chdir=terraform apply -replace='proxmox_vm_qemu.k3s_worker[0]'`, re-run the join, uncordon.
+- **Changes that need a reboot** (CPU, memory, ...) are applied as pending with a warning (`automatic_reboot = false`). Reboot the nodes one at a time: drain → reboot → uncordon.
+- **VM IDs**: control-plane nodes use `vm_id_start + i`, workers `vm_id_start + 100 + i`, so changing `control_plane_count` never touches a worker.
+- **Lowering a count** deletes the highest-numbered node without draining it — drain it first.
+
 ### ansible/
 
 - **system-utils-install.yml**: qemu-guest-agent + base utilities on all nodes, plus `unattended-upgrades` (security and normal package updates, including the kernel, applied automatically — reboots are explicitly left to Kured; see [Automatic OS Updates](#automatic-os-updates-unattended-upgrades--kured)).

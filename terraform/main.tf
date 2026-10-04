@@ -73,6 +73,13 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
 
   start_at_node_boot = true
 
+  # Never reboot on apply: with count, every affected VM would reboot at the
+  # same time (whole cluster down). Changes that need a reboot are applied as
+  # pending and reported as a warning; reboot the nodes one at a time
+  # (drain -> reboot -> uncordon).
+  automatic_reboot          = false
+  automatic_reboot_severity = "warning"
+
   startup_shutdown {
     order = 1
   }
@@ -120,8 +127,17 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
+  # clone/full_clone/vmid/efidisk changes force a destroy+create of the VM
+  # (provider ForceNew), which with count hits every node at once. They only
+  # matter at creation: a new template applies to newly added nodes, and
+  # existing nodes are rebuilt deliberately, one at a time
+  # (tofu apply -replace='proxmox_vm_qemu.k3s_worker[0]').
   lifecycle {
     ignore_changes = [
+      clone,
+      full_clone,
+      vmid,
+      efidisk,
       network,
       ciuser,
       sshkeys,
@@ -136,7 +152,9 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   target_node = var.proxmox_node
   clone       = var.template_id
   full_clone  = true
-  vmid        = var.vm_id_start + var.control_plane_count + count.index
+  # Own range, independent of control_plane_count: deriving it from that
+  # count shifted (= replaced) every worker when a control-plane node was added.
+  vmid = var.vm_id_start + 100 + count.index
 
   agent   = 1
   os_type = "cloud-init"
@@ -155,6 +173,13 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   boot = "order=virtio0"
 
   start_at_node_boot = true
+
+  # Never reboot on apply: with count, every affected VM would reboot at the
+  # same time (whole cluster down). Changes that need a reboot are applied as
+  # pending and reported as a warning; reboot the nodes one at a time
+  # (drain -> reboot -> uncordon).
+  automatic_reboot          = false
+  automatic_reboot_severity = "warning"
 
   startup_shutdown {
     order = 2
@@ -203,8 +228,17 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
+  # clone/full_clone/vmid/efidisk changes force a destroy+create of the VM
+  # (provider ForceNew), which with count hits every node at once. They only
+  # matter at creation: a new template applies to newly added nodes, and
+  # existing nodes are rebuilt deliberately, one at a time
+  # (tofu apply -replace='proxmox_vm_qemu.k3s_worker[0]').
   lifecycle {
     ignore_changes = [
+      clone,
+      full_clone,
+      vmid,
+      efidisk,
       network,
       ciuser,
       sshkeys,

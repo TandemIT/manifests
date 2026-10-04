@@ -49,7 +49,7 @@ variable "template_id" {
 }
 
 variable "vm_id_start" {
-  description = "Starting VM ID for created VMs"
+  description = "First VM ID: control-plane nodes get vm_id_start+i, workers vm_id_start+100+i"
   type        = number
   default     = 30000
 }
@@ -88,6 +88,11 @@ variable "control_plane_count" {
   description = "Number of control plane nodes (3 for etcd quorum / kube-vip HA)"
   type        = number
   default     = 3
+
+  validation {
+    condition     = var.control_plane_count >= 1 && var.control_plane_count <= 100
+    error_message = "control_plane_count must be 1-100 (workers' VM IDs start at vm_id_start+100)."
+  }
 }
 
 variable "control_plane_cpu" {

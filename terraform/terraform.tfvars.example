@@ -13,7 +13,7 @@ ssh_public_key = "ssh-ed25519 YOUR_PUBLIC_KEY_HERE"
 # main.tf makes Terraform wait for it before finishing the apply).
 proxmox_node = "proxmox"
 template_id  = "ubuntu-24.04-cloud-tpl"
-vm_id_start  = 200
+vm_id_start  = 200 # control plane: 200..; workers: 300..
 storage      = "local-zfs"
 bridge       = "vmbr0"
 gateway      = "172.16.10.1"
