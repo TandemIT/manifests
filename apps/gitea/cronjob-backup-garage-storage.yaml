@@ -2,6 +2,9 @@
 # for the database) run before kured's 02:00 window and upload to Garage's
 # platform-backups bucket with 14-day retention.
 #
+# Retention uses if/then, not an && chain: under bash -e a kept object would
+# end the loop with status 1 and fail the Job after a successful upload.
+#
 # Each Garage key is scoped to one bucket, so this mirrors gitea-storage with
 # its own key and uploads the archive with garage-backups-credentials.
 # Needs about twice the bucket size in node ephemeral storage (mirror + tar).
@@ -120,7 +123,9 @@ spec:
                   cutoff=$(date -d '-14 days' +%Y%m%dT%H%M%SZ)
                   aws s3 ls s3://platform-backups/gitea-storage/ | awk '{print $4}' | while read -r key; do
                     stamp=$(echo "${key}" | sed -E 's/gitea-storage-([0-9TZ]+)\.tar\.gz/\1/')
-                    [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ] && aws s3 rm "s3://platform-backups/gitea-storage/${key}"
+                    if [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ]; then
+                      aws s3 rm "s3://platform-backups/gitea-storage/${key}"
+                    fi
                   done
               securityContext:
                 runAsNonRoot: true

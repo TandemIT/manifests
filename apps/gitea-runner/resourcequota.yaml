@@ -1,7 +1,8 @@
 # Keeps runners from starving platform pods on the shared, untainted nodes.
 # Sized against terraform.tfvars.example's node defaults (9 CPU / 18Gi in
-# total). 5 replicas use 7.5 CPU / 7.5Gi of limits; a 6th pod (including the
-# maxSurge pod during a rollout) exceeds limits.cpu.
+# total). 5 replicas use 7.5 CPU / 7.5Gi of limits, so a 6th pod doesn't fit:
+# rollouts use maxSurge 0 (deployment.yaml), and each replacement pod waits
+# until the old one has drained.
 apiVersion: v1
 kind: ResourceQuota
 metadata:

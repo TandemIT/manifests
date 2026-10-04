@@ -1,5 +1,6 @@
 ---
-# Only Gitea pods may reach pgpool; this also shuts out backup-postgresql.
+# Gitea and the backup-postgresql CronJob. (The chart's own
+# gitea-postgresql-ha-pgpool policy also admits 5432 from anywhere today.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,6 +21,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: gitea
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backup-postgresql
       ports:
         - protocol: TCP
           port: 5432

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Deletes the cert-manager, traefik, anubis, gitea, gitea-runners and garage
 # namespaces (PVCs included) plus Traefik/cert-manager cluster-scoped leftovers.
-# Argo CD and its Applications are untouched, so Argo CD recreates the apps,
-# but this also deletes the bootstrap secrets (scripts/01) and the OIDC/LDAP
-# provider secrets (scripts/06). Afterwards, re-run scripts/01 on the first
-# control plane (it recreates missing secrets) and scripts/06.
+# Argo CD and its Applications are untouched, so Argo CD recreates the apps.
+# The scripts/01 and scripts/06 secrets are saved first and restored at the
+# end; the runner tokens go back as placeholders, and the Garage S3 keys are
+# not kept, because the fresh Gitea and Garage get theirs from the bootstrap Jobs.
 
 set -euo pipefail
 
@@ -15,9 +15,16 @@ source "${SCRIPT_DIR}/lib-functions.sh"
 APP_NAMESPACES=(cert-manager traefik anubis gitea gitea-runners garage)
 TRAEFIK_CLUSTER_RESOURCES=(ingressclass/traefik clusterrole/traefik clusterrolebinding/traefik)
 CERT_MANAGER_CLUSTER_ISSUERS=(clusterissuer/letsencrypt-prod clusterissuer/letsencrypt-staging)
-HELM_RELEASES=(
-  "gitea:gitea"
+# <namespace>/<name> of the scripts/01 secrets that Argo CD cannot recreate.
+KEPT_SECRETS=(
+  gitea/gitea-admin
+  gitea/postgresql-ha-credentials
+  gitea/postgresql-ha-pgpool-credentials
+  garage/garage-rpc
+  anubis/anubis-key
 )
+PROVIDER_LABEL="app.kubernetes.io/managed-by=auth-providers"
+RUNNER_TOKEN_SECRETS=(gitea-runner-registration gitea-api-token)
 
 usage() {
   cat <<'USAGE'
@@ -66,30 +73,42 @@ if [[ "${force}" != "true" ]]; then
   fi
 fi
 
-require_binary kubectl helm
+require_binary kubectl jq
 require_cluster
 
-cleanup_helm_releases() {
-  local namespace="$1"
-  local releases
+# Writes the kept secrets as one List manifest, stripped to name, namespace,
+# labels, type and data so it can be re-created in fresh namespaces.
+save_secrets() {
+  local out="$1" ref
+  {
+    for ref in "${KEPT_SECRETS[@]}"; do
+      kubectl get secret "${ref#*/}" -n "${ref%%/*}" -o json 2>/dev/null \
+        || warn "Not found, not kept: ${ref}"
+    done
+    kubectl get secret -n gitea -l "${PROVIDER_LABEL}" -o json | jq '.items[]'
+  } | jq -s '{apiVersion: "v1", kind: "List", items: map({
+      apiVersion, kind, type, data,
+      metadata: {name: .metadata.name, namespace: .metadata.namespace,
+                 labels: (.metadata.labels // {})}})}' > "${out}"
+}
 
-  releases=$(helm list -n "${namespace}" --short 2>/dev/null || true)
-  if [[ -z "${releases}" ]]; then
-    return 0
-  fi
-
-  while IFS= read -r release; do
-    [[ -n "${release}" ]] || continue
-    log "Uninstalling Helm release: ${release}"
-    helm uninstall "${release}" -n "${namespace}" --wait >/dev/null 2>&1 || true
-  done <<< "${releases}"
+restore_secrets() {
+  local file="$1" ns name
+  for ns in gitea gitea-runners anubis garage; do
+    kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null || return 1
+  done
+  kubectl apply -f "${file}" >/dev/null || return 1
+  for name in "${RUNNER_TOKEN_SECRETS[@]}"; do
+    kubectl create secret generic "${name}" -n gitea-runners \
+      --from-literal=token=placeholder-update-after-gitea-is-up \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null || return 1
+  done
 }
 
 cleanup_namespace() {
   local namespace="$1"
 
   log "Cleaning up namespace: ${namespace}"
-  cleanup_helm_releases "${namespace}"
 
   kubectl delete pods --all -n "${namespace}" --grace-period=0 --force >/dev/null 2>&1 || true
   kubectl delete all,ingress,networkpolicy,configmap,secret,serviceaccount,role,rolebinding,pvc \
@@ -145,15 +164,11 @@ cleanup_cluster_scoped_resources() {
   done
 }
 
-step_header 1 "Uninstalling Helm releases"
-for release_info in "${HELM_RELEASES[@]}"; do
-  release_name="${release_info%%:*}"
-  release_namespace="${release_info##*:}"
-  if helm status "${release_name}" -n "${release_namespace}" >/dev/null 2>&1; then
-    log "Uninstalling: ${release_name} from ${release_namespace}"
-    helm uninstall "${release_name}" -n "${release_namespace}" --wait >/dev/null 2>&1 || true
-  fi
- done
+step_header 1 "Saving bootstrap and provider secrets"
+SAVED_SECRETS="$(mktemp)"
+chmod 600 "${SAVED_SECRETS}"
+save_secrets "${SAVED_SECRETS}"
+log "Saved $(jq '.items | length' "${SAVED_SECRETS}") secret(s) to ${SAVED_SECRETS}"
 
 step_header 2 "Deleting application namespaces"
 for namespace in "${APP_NAMESPACES[@]}"; do
@@ -162,6 +177,13 @@ done
 
 step_header 3 "Removing cluster-scoped resources"
 cleanup_cluster_scoped_resources
+
+step_header 4 "Restoring bootstrap and provider secrets"
+# On failure the copy stays (mode 600) so nothing is lost; re-run this step by hand.
+restore_secrets "${SAVED_SECRETS}" \
+  || die "Restore failed; apply ${SAVED_SECRETS} once the namespaces are gone, then delete it"
+rm -f "${SAVED_SECRETS}"
+log "Restored; runner tokens reset to placeholders"
 
 section_header "Reset Validation"
 echo ""

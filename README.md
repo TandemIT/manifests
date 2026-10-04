@@ -117,7 +117,7 @@ apps/        manifests and Helm values per component
 - The PostgreSQL, pgpool and Valkey images are the chart defaults from `bitnamilegacy/*`, which is frozen and gets no security updates.
 - Valkey has no password. Only `apps/gitea/networkpolicy-valkey.yaml` isolates it.
 - NetworkPolicies select specific pods, and there is no namespace-wide default-deny.
-- No backup has been restore-tested. `backup-postgresql` is currently blocked by the pgpool NetworkPolicy, which admits only Gitea pods.
+- No backup has been restore-tested.
 - Objects written to the Gitea PVC before Garage storage was configured were not migrated.
 - Runner autoscaling is waiting on an upstream KEDA Gitea scaler (see `apps/gitea-runner/scaledobject.yaml`).
 - The Argo CD allowlist covers all of RFC1918 until the VPN CIDR is known (`argocd/install/ip-allowlist.yaml`).

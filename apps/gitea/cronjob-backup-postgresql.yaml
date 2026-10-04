@@ -91,7 +91,9 @@ spec:
                   cutoff=$(date -d '-14 days' +%Y%m%dT%H%M%SZ)
                   aws s3 ls s3://platform-backups/postgresql/ | awk '{print $4}' | while read -r key; do
                     stamp=$(echo "${key}" | sed -E 's/gitea-([0-9TZ]+)\.sql\.gz/\1/')
-                    [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ] && aws s3 rm "s3://platform-backups/postgresql/${key}"
+                    if [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ]; then
+                      aws s3 rm "s3://platform-backups/postgresql/${key}"
+                    fi
                   done
               securityContext:
                 runAsNonRoot: true

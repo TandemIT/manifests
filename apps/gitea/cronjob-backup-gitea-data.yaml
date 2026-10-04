@@ -84,7 +84,9 @@ spec:
                   cutoff=$(date -d '-14 days' +%Y%m%dT%H%M%SZ)
                   aws s3 ls s3://platform-backups/gitea-data/ | awk '{print $4}' | while read -r key; do
                     stamp=$(echo "${key}" | sed -E 's/gitea-data-([0-9TZ]+)\.tar\.gz/\1/')
-                    [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ] && aws s3 rm "s3://platform-backups/gitea-data/${key}"
+                    if [ -n "${stamp}" ] && [ "${stamp}" \< "${cutoff}" ]; then
+                      aws s3 rm "s3://platform-backups/gitea-data/${key}"
+                    fi
                   done
               securityContext:
                 runAsNonRoot: true

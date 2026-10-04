@@ -16,9 +16,11 @@ spec:
       app: gitea-runner
   strategy:
     type: RollingUpdate
+    # Replace in place: a surge pod would exceed the ResourceQuota's
+    # limits.cpu (resourcequota.yaml), and the quota is the point.
     rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+      maxUnavailable: 1
+      maxSurge: 0
   template:
     metadata:
       annotations:

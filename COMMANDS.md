@@ -150,10 +150,10 @@ node without draining it, so drain it first.
 bash scripts/05-reset-apps.sh      # -f skips the confirmation
 ```
 
-This deletes the app namespaces, **including the bootstrap and provider
-secrets**. Afterwards, re-run `scripts/01-bootstrap-first-master.sh` on the first control
-plane (it recreates missing secrets and skips existing ones) and
-`scripts/06-auth-providers.sh`. Then Argo CD brings the apps back.
+This deletes the app namespaces and their data (PVCs). The bootstrap and
+OIDC/LDAP secrets are saved first and restored at the end, so Argo CD brings
+the apps back on its own. The runner token and Garage S3 keys are minted
+again by the bootstrap Jobs.
 
 ## Uninstall K3s
 
