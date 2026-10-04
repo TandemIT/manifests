@@ -4,9 +4,7 @@ metadata:
   name: l2-advertisement
   namespace: metallb-system
 spec:
-  # The public IP lives on the public VLAN, which the nodes reach only via
-  # their address-less second NIC (terraform public_vlan_tag, named public0
-  # by ansible/system-utils-install.yml). Announcing on eth0 (the internal
-  # VLAN) would answer ARP where no router looks for this IP.
+  # The public IP's router is on the public VLAN, reached only through public0
+  # (terraform public_vlan_tag). ARP answers on the internal NIC would go unseen.
   interfaces:
     - public0
