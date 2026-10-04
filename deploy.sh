@@ -79,7 +79,7 @@ for NODE_IP in "${ALL_NODE_IPS[@]}"; do
     echo "SSH OK: ${NODE_IP}"
 done
 
-step "Step 3: Installing system utilities (qemu-guest-agent, micro, unattended-upgrades)"
+step "Step 3: Installing system utilities (qemu-guest-agent, micro, unattended-upgrades, public0 NIC)"
 ansible-playbook -i ansible/inventory.yml ansible/system-utils-install.yml
 
 step "Step 4: Installing K3s cluster + platform + Argo CD"
