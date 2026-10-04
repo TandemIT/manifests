@@ -9,10 +9,8 @@ proxmox_api_token_secret = "YOUR_TOKEN_SECRET_HERE"
 ssh_public_key = "ssh-ed25519 YOUR_PUBLIC_KEY_HERE"
 
 # Proxmox Settings
-# NOTE: the template must have qemu-guest-agent preinstalled (agent = 1 in
-# main.tf makes Terraform wait for it before finishing the apply).
-# Optional: cloud-init vendor snippet (e.g. one that installs
-# qemu-guest-agent). Clones do not inherit the template's own cicustom.
+# The template needs qemu-guest-agent: the apply waits for it (agent = 1).
+# Optional vendor snippet; clones don't inherit the template's cicustom.
 # cloudinit_vendor_snippet = "local:snippets/ubuntu-noble.yaml"
 
 proxmox_node = "proxmox"
@@ -40,25 +38,19 @@ worker_disk_size = "10G"
 worker_ip_start  = "172.16.10.150"
 
 # K3s Configuration
-# The manifests in this repo are pinned/tested against v1.32.3+k3s1.
 k3s_version = "v1.32.3+k3s1"
 
-# Control-plane VIP (kube-vip). Keep outside the node ranges. The MetalLB
-# pool (platform/metallb/ipaddresspool.yaml) is a separate, external public
-# address, not part of this LAN range.
+# Control-plane VIP (kube-vip), outside the node ranges. The MetalLB address
+# (platform/metallb/ipaddresspool.yaml) is a separate public IP.
 vip = "172.16.10.50"
 
-# Where the nodes + Argo CD pull the manifests from. Local commits must be
-# pushed here before deploying.
+# Nodes and Argo CD pull from here: push before deploying.
 manifests_repo     = "https://github.com/TandemIT/manifests.git"
 manifests_revision = "master"
 
-# Gitea OIDC login providers (optional, any number). Create the OAuth2
-# provider/application for each in your identity provider (e.g. Authentik)
-# yourself, then add an entry below, keyed by a short slug - this repo does
-# not create or manage identity-provider resources. Leave empty ({}) to
-# skip OIDC. deploy.sh pushes these via scripts/06-auth-providers.sh;
-# re-run that script after changing them.
+# Gitea OIDC providers (optional, any number), keyed by slug. Create the
+# OAuth2 application in your identity provider yourself; this repo doesn't.
+# Re-run scripts/06-auth-providers.sh after changing them. {} = none.
 gitea_oidc_providers = {
   # authentik = {
   #   display_name  = "Authentik"
@@ -75,9 +67,8 @@ gitea_oidc_providers = {
   # }
 }
 
-# Gitea LDAP login providers (optional, any number) - same idea as OIDC
-# above. Point at an existing LDAP/AD server, or an Authentik LDAP outpost
-# if you set one up; this repo does not create or manage either.
+# Gitea LDAP providers (optional, any number) for an existing LDAP/AD server.
+# {} = none.
 gitea_ldap_providers = {
   # authentik = {
   #   display_name     = "Authentik LDAP"

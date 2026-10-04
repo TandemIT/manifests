@@ -22,8 +22,6 @@ variable "ssh_public_key" {
   default     = "YOUR_SSH_PUBLIC_KEY_HERE"
 }
 
-# Deliberately not in terraform.tfvars: export TF_VAR_vm_password before
-# running deploy.sh. Console/serial login password for the cloud-init user.
 variable "vm_password" {
   description = "Password for the cloud-init user (ubuntu) on every VM - set via TF_VAR_vm_password"
   type        = string
@@ -164,7 +162,7 @@ variable "worker_ip_start" {
 }
 
 variable "k3s_version" {
-  description = "K3s version to install (the repo's manifests are pinned against v1.32.3+k3s1)"
+  description = "K3s version to install (system-upgrade-controller then applies patch releases)"
   type        = string
   default     = "v1.32.3+k3s1"
 }
@@ -187,13 +185,9 @@ variable "manifests_revision" {
   default     = "master"
 }
 
-# Not used by any resource or output here (so it never lands in state).
-# scripts/06-auth-providers.sh reads it via `console` and pushes the
-# credentials into the cluster as Secrets, so they never touch git.
-# Supports any number of providers. Create the OAuth2 provider/application for each one yourself (e.g. in Authentik, Keycloak,
-# ...) and add an entry here, keyed by a short slug used in the secret name
-# and Gitea's callback URL (/user/oauth2/<slug>/callback). Leave empty ({})
-# to skip OIDC.
+# Not referenced by any resource or output, so it never lands in state;
+# scripts/06-auth-providers.sh reads it via `console`. The slug is used in the
+# Secret name and Gitea's callback URL (/user/oauth2/<slug>/callback).
 variable "gitea_oidc_providers" {
   description = "Gitea OIDC login providers, keyed by slug"
   type = map(object({
@@ -207,10 +201,7 @@ variable "gitea_oidc_providers" {
   sensitive = true
 }
 
-# Same passthrough pattern as gitea_oidc_providers, for Gitea's other
-# built-in auth source type. Point this at an existing LDAP/AD server, or an
-# Authentik LDAP outpost if you set one up - this repo does not create or
-# manage either. Leave empty ({}) to skip LDAP.
+# Same pattern as gitea_oidc_providers.
 variable "gitea_ldap_providers" {
   description = "Gitea LDAP login providers, keyed by slug"
   type = map(object({

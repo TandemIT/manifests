@@ -26,8 +26,7 @@ provider "proxmox" {
   }
 }
 
-# The K3s cluster token is NOT generated here: k3s mints its own node-token
-# on the first master, and Ansible slurps it for the join plays.
+# No K3s token here: K3s mints one on the first server and Ansible reads it.
 
 locals {
   control_plane_network    = "${join(".", slice(split(".", var.control_plane_ip_start), 0, 3))}.0/24"
@@ -76,10 +75,8 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   # Explicit (vm_state is deprecated; unset it diffs "running" -> null).
   power_state = "running"
 
-  # Never reboot on apply: with count, every affected VM would reboot at the
-  # same time (whole cluster down). Changes that need a reboot are applied as
-  # pending and reported as a warning; reboot the nodes one at a time
-  # (drain -> reboot -> uncordon).
+  # Never reboot on apply: with count, every affected VM reboots at once.
+  # Reboot-requiring changes stay pending (warning); reboot one node at a time.
   automatic_reboot          = false
   automatic_reboot_severity = "warning"
 
@@ -116,7 +113,6 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
     tag    = var.vlan_tag
   }
 
-  # Console access
   serial {
     id   = 0
     type = "socket"
@@ -134,11 +130,10 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
   cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
-  # clone/full_clone/vmid/efidisk/cicustom changes force a destroy+create of the VM
-  # (provider ForceNew), which with count hits every node at once. They only
-  # matter at creation: a new template applies to newly added nodes, and
-  # existing nodes are rebuilt deliberately, one at a time
-  # (tofu apply -replace='proxmox_vm_qemu.k3s_worker[0]').
+  # clone/full_clone/vmid/efidisk/cicustom are ForceNew: a change would
+  # replace every node at once. network/ciuser/sshkeys are ignored too. All of
+  # these apply only to new VMs; rebuild existing ones one at a time with
+  # -replace (COMMANDS.md).
   lifecycle {
     ignore_changes = [
       clone,
@@ -177,18 +172,12 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     sockets = 1
   }
   scsihw = "virtio-scsi-pci"
-  # Explicit: a clone otherwise inherits the template's boot order, which
-  # usually points at scsi0 rather than the virtio0 disk defined below.
+  # Boot order, power_state, automatic_reboot: see k3s_control_plane.
   boot = "order=virtio0"
 
   start_at_node_boot = true
-  # Explicit (vm_state is deprecated; unset it diffs "running" -> null).
-  power_state = "running"
+  power_state        = "running"
 
-  # Never reboot on apply: with count, every affected VM would reboot at the
-  # same time (whole cluster down). Changes that need a reboot are applied as
-  # pending and reported as a warning; reboot the nodes one at a time
-  # (drain -> reboot -> uncordon).
   automatic_reboot          = false
   automatic_reboot_severity = "warning"
 
@@ -225,7 +214,6 @@ resource "proxmox_vm_qemu" "k3s_worker" {
     tag    = var.vlan_tag
   }
 
-  # Console access
   serial {
     id   = 0
     type = "socket"
@@ -236,18 +224,13 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   nameserver   = var.nameserver
   searchdomain = var.searchdomain
 
-  # Vendor data merges with the ciuser/ipconfig0/... settings below.
   cicustom = var.cloudinit_vendor_snippet == "" ? null : "vendor=${var.cloudinit_vendor_snippet}"
 
   ciuser     = "ubuntu"
   cipassword = var.vm_password
   sshkeys    = var.ssh_public_key
 
-  # clone/full_clone/vmid/efidisk/cicustom changes force a destroy+create of the VM
-  # (provider ForceNew), which with count hits every node at once. They only
-  # matter at creation: a new template applies to newly added nodes, and
-  # existing nodes are rebuilt deliberately, one at a time
-  # (tofu apply -replace='proxmox_vm_qemu.k3s_worker[0]').
+  # See k3s_control_plane.
   lifecycle {
     ignore_changes = [
       clone,
@@ -262,9 +245,8 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   }
 }
 
-# Render the Ansible inventory from the same variables that created the VMs,
-# so IPs, VIP, and the K3s version have a single source of truth. deploy.sh
-# runs the playbooks against this generated file.
+# Rendered from the same variables as the VMs: one source for IPs, VIP and
+# K3s version.
 resource "local_file" "ansible_inventory" {
   filename        = "${path.module}/../ansible/inventory.yml"
   file_permission = "0644"
