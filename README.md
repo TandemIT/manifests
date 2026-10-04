@@ -8,7 +8,7 @@ reconciles everything else from this repository. Operational commands are in
 ## Architecture
 
 - **Nodes:** 3 control-plane + 3 worker VMs by default (`terraform/variables.tf`). kube-vip announces the API VIP `172.16.10.50:6443` via ARP.
-- **Edge:** MetalLB (L2) gives Traefik the public IP `145.89.192.138` (ports 80, 443, 2222). `git.open-ict.hu` goes through Anubis to Gitea, except that clients in `145.89.192.0/24` and `172.16.0.0/12` bypass Anubis. SSH on 2222 goes straight to Gitea. `argo.git.open-ict.hu` is limited to RFC1918 sources.
+- **Edge:** MetalLB (L2) gives Traefik the public IP `145.89.192.138` (ports 80, 443, 2222) and announces it on `public0`, a second NIC with no address on the public VLAN. An nftables guard on `public0` admits only those ports (plus some ICMP) to that IP, and replies are policy-routed back out through `public_gateway`. `git.open-ict.hu` goes through Anubis to Gitea, except that clients in `145.89.192.0/24` and `172.16.0.0/12` bypass Anubis. SSH on 2222 goes straight to Gitea. `argo.git.open-ict.hu` is limited to RFC1918 sources.
 - **Gitea:** one replica, PostgreSQL HA (2 nodes + 2 pgpool), and a 6-pod Valkey cluster. LFS, packages, Actions artifacts, attachments, avatars and archives go to Garage (3-replica S3). Git repositories stay on Gitea's PVC.
 - **Runners:** a fixed 5-replica Deployment with a privileged dind sidecar. Each pod registers ephemerally on start and uses act_runner's default labels.
 - **Two layers:** `platform/` (MetalLB, the CoreDNS override, and the kube-vip static-pod template) is applied once by `scripts/01`, outside Argo CD. Everything else is an Argo CD Application in `argocd/apps/` (app-of-apps).
@@ -38,7 +38,7 @@ reconciles everything else from this repository. Operational commands are in
 - A Proxmox API token and an Ubuntu cloud-image template with **qemu-guest-agent preinstalled**. Terraform waits for the agent.
 - A Debian/Ubuntu deploy host with an SSH key and `python3`. `setup.sh` installs OpenTofu, kubectl and jq if they're missing, and `deploy.sh` installs Ansible.
 - Free LAN addresses for the VIP (`172.16.10.50`) and the nodes (defaults `172.16.10.100-102` and `172.16.10.150-152`).
-- `145.89.192.138` routed to the node uplink, and DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` pointing at it.
+- A public VLAN on the Proxmox bridge that carries `145.89.192.138`, and its router (`public_vlan_tag` and `public_gateway` in `terraform.tfvars`). DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` must point at that IP.
 - Internet access from the nodes for images and Let's Encrypt HTTP-01.
 
 ## Setup
@@ -59,7 +59,7 @@ export TF_VAR_vm_password='...'   # cloud-init user password, min 12 chars; neve
 
 1. Runs `tofu apply` (or `terraform` if tofu is missing; override with `TF_BIN=`). This creates the VMs and renders `ansible/inventory.yml`.
 2. Waits for SSH on every node.
-3. Runs `ansible/system-utils-install.yml`: qemu-guest-agent, micro, unattended-upgrades.
+3. Runs `ansible/system-utils-install.yml`: qemu-guest-agent, micro, unattended-upgrades, and the `public0` NIC (netplan, nftables guard, rp_filter).
 4. Runs `ansible/k3s-install.yml`. It clones the repo to `/opt/manifests` on every node, runs `scripts/01` on the first control plane, `02` on the other control planes one at a time, and `03` on the workers. It then writes `./kubeconfig`, pointed at the VIP.
 5. Runs `scripts/06-auth-providers.sh` to push the OIDC/LDAP secrets.
 6. Waits up to 20 minutes for every Argo CD Application to be Synced and Healthy.
@@ -110,6 +110,8 @@ apps/        manifests and Helm values per component
 
 ## Known limitations
 
+- MetalLB announces only on `public0` (`platform/metallb/l2advertisement.yaml`). With `public_vlan_tag` unset, which is the default and also the case for manual setup, no `public0` exists and the public IP is never announced.
+- Setting `public_vlan_tag` on an existing cluster adds the NIC only to new or rebuilt VMs, because `network` is in `ignore_changes`.
 - Every PVC uses K3s `local-path`. Volumes are pinned to one node, can't be expanded in place, and aren't replicated at the storage level.
 - PostgreSQL HA has two nodes and no witness, so a network partition between them has no arbiter.
 - The PostgreSQL, pgpool and Valkey images are the chart defaults from `bitnamilegacy/*`, which is frozen and gets no security updates.

@@ -104,6 +104,18 @@ aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
   s3://platform-backups/gitea-data/gitea-data-<timestamp>.tar.gz - | tar -tzv | head
 ```
 
+## Public NIC (public0)
+
+```bash
+# Re-apply only the public0 config (netplan, nftables guard, rp_filter, reply routing)
+ansible-playbook -i ansible/inventory.yml ansible/system-utils-install.yml --tags public-nic
+
+# On a node: the reply rule/route and the guard table
+ip rule | grep 'lookup 105'
+ip route show table 105
+sudo nft list table inet public0
+```
+
 ## Node maintenance
 
 Always one node at a time. Changing `count` instances that need a replace or
@@ -125,6 +137,9 @@ tofu -chdir=terraform apply -replace='proxmox_vm_qemu.k3s_worker[0]'   # or k3s_
 Don't rebuild `k3s_control_plane[0]` this way. `deploy.sh` always runs
 `scripts/01` (`--cluster-init`) on that node, so a fresh VM there would start
 a new cluster.
+
+Setting `public_vlan_tag` later adds the public NIC only to new VMs, so
+rebuild each existing node this way to get it.
 
 Lowering `control_plane_count` or `worker_count` deletes the highest-numbered
 node without draining it, so drain it first.
