@@ -161,8 +161,11 @@ Runs `deploy.sh` on the infra runner for every push to master of the
 a push). Once, in that repo's Settings:
 
 - Actions enabled; mirror interval as short as you want deploys to lag GitHub.
-- Secrets `VM_PASSWORD`, `STATE_PASSPHRASE`, `STATE_TOKEN`, `TFVARS`
-  (whole `terraform.tfvars`), `SSH_PRIVATE_KEY`; variable `STATE_USER`.
+- Secrets `VM_PASSWORD`, `STATE_PASSPHRASE`, `STATE_TOKEN`, `SSH_PRIVATE_KEY`,
+  and the credentials from `terraform.tfvars`: `PROXMOX_API_TOKEN_ID`,
+  `PROXMOX_API_TOKEN_SECRET`, `GITEA_OIDC_PROVIDERS`, `GITEA_LDAP_PROVIDERS`
+  (the value after `=`, e.g. `{ authentik = { ... } }`; strings without
+  quotes). Variable `STATE_USER`. Settings come from `cluster.auto.tfvars`.
 - `STATE_TOKEN` belongs to a bot account (or user) in a `Cloud-Infra` team
   with package write, scope `write:package`. The job's own token can only read
   packages in Gitea 28.

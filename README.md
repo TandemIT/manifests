@@ -10,9 +10,9 @@ reconciles everything else from this repository. Operational commands are in
 - **Nodes:** 3 control-plane + 3 worker VMs by default (`terraform/variables.tf`). kube-vip announces the API VIP `172.16.10.50:6443` via ARP.
 - **Edge:** MetalLB (L2) gives Traefik the public IP `145.89.192.138` (ports 80, 443, 2222) and announces it on `public0`, a second NIC with no address on the public VLAN. An nftables guard on `public0` admits only those ports (plus some ICMP) to that IP, and replies are policy-routed back out through `public_gateway`. `git.open-ict.hu` goes through Anubis to Gitea, except that clients in `145.89.192.0/24` and `172.16.0.0/12` bypass Anubis. SSH on 2222 goes straight to Gitea. `argo.git.open-ict.hu` is limited to RFC1918 sources.
 - **Gitea:** one replica, PostgreSQL HA (2 nodes + 2 pgpool), and a 6-pod Valkey cluster. LFS, packages, Actions artifacts, attachments, avatars and archives go to Garage (3-replica S3). Git repositories stay on Gitea's PVC.
-- **Runners:** a fixed 5-replica Deployment with a privileged dind sidecar. Each pod registers ephemerally on start and uses act_runner's default labels. A separate single infra runner (label `infra`, `Cloud-Infra` org only) runs the deploy workflow in `.gitea/workflows/` and is the only pod that can reach Proxmox, node SSH and the K3s API.
+- **Runners:** a fixed 5-replica Deployment with a privileged dind sidecar. Each pod registers ephemerally on start and uses act_runner's default labels. A separate single infra runner (label `infra`, `Cloud-Infra` org only) runs the deploy workflow in `.gitea/workflows/`. Its egress is not limited in-cluster but at the site firewall (`apps/gitea-runner-infra/networkpolicy.yaml`).
 - **Two layers:** `platform/` (MetalLB, the CoreDNS override, and the kube-vip static-pod template) is applied once by `scripts/01`, outside Argo CD. Everything else is an Argo CD Application in `argocd/apps/` (app-of-apps).
-- **Secrets:** none are in git. Random secrets are created by `scripts/01`. Runtime tokens (runner registration, Garage S3 keys) are minted by in-cluster bootstrap Jobs. OIDC/LDAP credentials come from `terraform/terraform.tfvars` through `scripts/06-auth-providers.sh`.
+- **Secrets:** none are in git. Random secrets are created by `scripts/01`. Runtime tokens (runner registration, Garage S3 keys) are minted by in-cluster bootstrap Jobs. OIDC/LDAP credentials come from `terraform/terraform.tfvars` (local, gitignored) or Actions secrets through `scripts/06-auth-providers.sh`. Non-sensitive settings are committed in `terraform/cluster.auto.tfvars`.
 - **Self-maintenance:** unattended-upgrades installs OS updates, and kured reboots one node at a time (Mon-Fri 02:00-05:00). system-upgrade-controller applies K3s patch releases on the pinned minor channel (Mon-Fri 05:30-07:00). Three backup CronJobs upload to Garage nightly.
 
 ## Components
@@ -39,7 +39,7 @@ reconciles everything else from this repository. Operational commands are in
 - A Proxmox API token and an Ubuntu cloud-image template with **qemu-guest-agent preinstalled**. Terraform waits for the agent.
 - A Debian/Ubuntu deploy host with an SSH key and `python3`. `setup.sh` installs OpenTofu, kubectl and jq if they're missing, and `deploy.sh` installs Ansible.
 - Free LAN addresses for the VIP (`172.16.10.50`) and the nodes (defaults `172.16.10.100-102` and `172.16.10.150-152`).
-- A public VLAN on the Proxmox bridge that carries `145.89.192.138`, and its router (`public_vlan_tag` and `public_gateway` in `terraform.tfvars`). DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` must point at that IP.
+- A public VLAN on the Proxmox bridge that carries `145.89.192.138`, and its router (`public_vlan_tag` and `public_gateway` in `terraform/cluster.auto.tfvars`). DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` must point at that IP.
 - Internet access from the nodes for images and Let's Encrypt HTTP-01.
 
 ## Setup
@@ -51,7 +51,8 @@ your checkout: **push before you deploy**.
 
 ```bash
 ./setup.sh                        # checks/installs prerequisites, creates terraform/terraform.tfvars
-# edit terraform/terraform.tfvars, then push
+# settings: edit terraform/cluster.auto.tfvars (committed), then push
+# credentials: fill in terraform/terraform.tfvars (gitignored)
 export TF_VAR_vm_password='...'   # cloud-init user password, min 12 chars; never in tfvars
 export TF_VAR_state_passphrase='...'   # decrypts the OpenTofu state, min 16 chars
 # State backend: Gitea's package registry (see COMMANDS.md, State, for a
@@ -131,6 +132,6 @@ apps/        manifests and Helm values per component
 - Runner autoscaling is waiting on an upstream KEDA Gitea scaler (see `apps/gitea-runner/scaledobject.yaml`).
 - The Argo CD allowlist covers all of RFC1918 until the VPN CIDR is known (`argocd/install/ip-allowlist.yaml`).
 - The OpenTofu state lives in Gitea, inside the cluster it manages. It is encrypted client-side; `scripts/07-pull-state.sh` keeps the off-cluster copy and has to be run after every apply. Losing `TF_VAR_state_passphrase` makes every copy unreadable.
-- `terraform/terraform.tfvars` is the only copy of the OIDC/LDAP credentials, apart from the `TFVARS` Actions secret. Back it up.
-- The infra runner (`apps/gitea-runner-infra/`) can reach Proxmox, every node over SSH and the K3s API, and the deploy job holds cluster-admin and the Proxmox token. Anyone who can push to master of the Cloud-Infra repo, or of the GitHub repo it mirrors, controls the cluster.
+- The Proxmox token and OIDC/LDAP credentials exist only in `terraform/terraform.tfvars` (local) and the Actions secrets. Back the file up.
+- The infra runner (`apps/gitea-runner-infra/`) has unrestricted egress in-cluster; the site firewall is the only limit, and it sees node IPs, not the runner, so it can't single the runner out. The deploy job holds cluster-admin, the Proxmox token and the state passphrase. Anyone who can push to master of the Cloud-Infra repo, or of the GitHub repo it mirrors, controls the cluster.
 - The `gitea/gitea-app-secrets` Secret is the only copy of the key that decrypts Gitea data in the database backups, and no backup job captures it. Keep a copy off-cluster (COMMANDS.md, Backups).

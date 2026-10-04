@@ -14,7 +14,7 @@ echo -e "${GREEN}================================${NC}"
 
 if [ ! -f "terraform/terraform.tfvars" ]; then
     cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-    echo -e "${YELLOW}Created terraform/terraform.tfvars - edit it with your Proxmox API token and network settings!${NC}"
+    echo -e "${YELLOW}Created terraform/terraform.tfvars - fill in the Proxmox API token and login providers (settings: terraform/cluster.auto.tfvars)${NC}"
 else
     echo -e "${GREEN}terraform/terraform.tfvars exists${NC}"
 fi
@@ -62,13 +62,13 @@ fi
 
 if [ -f "$HOME/.ssh/id_ed25519.pub" ]; then
     echo -e "${GREEN}[ok] SSH key: $(cat "$HOME/.ssh/id_ed25519.pub")${NC}"
-    echo "     Make sure ssh_public_key in terraform/terraform.tfvars matches."
+    echo "     Make sure ssh_public_key in terraform/cluster.auto.tfvars matches."
 else
     echo -e "${YELLOW}[--] No SSH key at ~/.ssh/id_ed25519.pub${NC}"
     echo "     Generate one: ssh-keygen -t ed25519 -C 'k3s-cluster'"
 fi
 
-PVE_HOST=$(sed -n 's|.*proxmox_api_url.*https://\([^:/"]*\).*|\1|p' terraform/terraform.tfvars | head -n1)
+PVE_HOST=$(sed -n 's|.*proxmox_api_url.*https://\([^:/"]*\).*|\1|p' terraform/cluster.auto.tfvars | head -n1)
 if [ -n "${PVE_HOST}" ]; then
     echo -e "\n${GREEN}Testing Proxmox connectivity (${PVE_HOST})...${NC}"
     if ping -c 1 -W 2 "${PVE_HOST}" &> /dev/null; then
@@ -79,7 +79,7 @@ if [ -n "${PVE_HOST}" ]; then
 fi
 
 echo -e "\n${YELLOW}Next steps:${NC}"
-echo "1. Edit terraform/terraform.tfvars (API token secret, template, network)"
+echo "1. Fill in terraform/terraform.tfvars (credentials); settings are in terraform/cluster.auto.tfvars"
 echo "2. Push any local manifest changes (nodes + Argo CD pull from git)"
-echo "3. export TF_VAR_vm_password='...' (VM console password, min 12 chars)"
+echo "3. export TF_VAR_vm_password, TF_VAR_state_passphrase and TF_HTTP_* (README, Automated)"
 echo "4. Run: ./deploy.sh"

@@ -2,8 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 # Org-scoped runner for Cloud-Infra's deploy workflow (.gitea/workflows/).
-# Separate from apps/gitea-runner: only this runner may reach Proxmox, node
-# SSH and the K3s API, and only Cloud-Infra's repos can schedule onto it.
+# Separate from apps/gitea-runner: only Cloud-Infra's repos can schedule onto
+# it, and its egress is limited at the site firewall, not by NetworkPolicy.
 namespace: gitea-runners-infra
 
 labels:

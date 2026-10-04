@@ -16,9 +16,11 @@ echo -e "${GREEN}================================${NC}"
 echo -e "${GREEN}K3s on Proxmox - Full Bootstrap${NC}"
 echo -e "${GREEN}================================${NC}"
 
-if [ ! -f "terraform/terraform.tfvars" ]; then
-    echo -e "${RED}Error: terraform/terraform.tfvars not found!${NC}"
-    echo "Run ./setup.sh, then edit terraform/terraform.tfvars"
+# Settings are committed (terraform/cluster.auto.tfvars). Credentials come
+# from terraform/terraform.tfvars (local, gitignored) or TF_VAR_* (CI).
+if [ ! -f "terraform/terraform.tfvars" ] && [ -z "${TF_VAR_proxmox_api_token_secret:-}" ]; then
+    echo -e "${RED}Error: no credentials: terraform/terraform.tfvars not found and TF_VAR_proxmox_api_token_secret not set${NC}"
+    echo "Run ./setup.sh, then fill in terraform/terraform.tfvars"
     exit 1
 fi
 

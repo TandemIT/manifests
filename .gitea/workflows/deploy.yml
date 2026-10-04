@@ -1,17 +1,21 @@
 # # Runs deploy.sh (OpenTofu -> Ansible -> Argo CD) from the Cloud-Infra mirror
 # # of this repo on every push to master: a pull-mirror sync fires the same
-# # push event. Only the infra runner (apps/gitea-runner-infra/, label
-# # "infra") can reach Proxmox, node SSH and the K3s API.
+# # push event. Runs on the infra runner (apps/gitea-runner-infra/, label
+# # "infra"), whose egress is controlled at the site firewall.
 # #
 # # Setup in the Cloud-Infra repo (Settings -> Actions):
 # #   Secrets:   VM_PASSWORD       TF_VAR_vm_password
 # #              STATE_PASSPHRASE  TF_VAR_state_passphrase (terraform/main.tf)
 # #              STATE_TOKEN       token with write:package for the state backend
-# #              TFVARS            full content of terraform/terraform.tfvars
+# #              PROXMOX_API_TOKEN_ID      TF_VAR_proxmox_api_token_id
+# #              PROXMOX_API_TOKEN_SECRET  TF_VAR_proxmox_api_token_secret
+# #              GITEA_OIDC_PROVIDERS      TF_VAR_gitea_oidc_providers (HCL map, {} = none)
+# #              GITEA_LDAP_PROVIDERS      TF_VAR_gitea_ldap_providers (HCL map, {} = none)
 # #              SSH_PRIVATE_KEY   key for ubuntu@ on every node (ssh_public_key)
 # #   Variables: STATE_USER        owner of STATE_TOKEN
-# # TFVARS must be complete: scripts/06 deletes the Secrets of any OIDC/LDAP
-# # provider missing from it.
+# # All other settings come from the committed terraform/cluster.auto.tfvars.
+# # The provider maps must be complete: scripts/06 deletes the Secrets of any
+# # OIDC/LDAP provider missing from them.
 # #
 # # deploy.sh refuses plans that destroy or replace a VM (ALLOW_VM_DESTROY);
 # # those stay a manual, one-node-at-a-time job (CLAUDE.md). Every run writes a
@@ -83,11 +87,9 @@
 
 #       - name: Write credentials
 #         env:
-#           TFVARS: ${{ secrets.TFVARS }}
 #           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 #         run: |
 #           umask 077
-#           printf '%s\n' "${TFVARS}" > terraform/terraform.tfvars
 #           mkdir -p ~/.ssh
 #           printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
 
@@ -95,6 +97,10 @@
 #         env:
 #           TF_VAR_vm_password: ${{ secrets.VM_PASSWORD }}
 #           TF_VAR_state_passphrase: ${{ secrets.STATE_PASSPHRASE }}
+#           TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+#           TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+#           TF_VAR_gitea_oidc_providers: ${{ secrets.GITEA_OIDC_PROVIDERS }}
+#           TF_VAR_gitea_ldap_providers: ${{ secrets.GITEA_LDAP_PROVIDERS }}
 #           TF_HTTP_ADDRESS: ${{ env.GITEA_INTERNAL }}/api/packages/${{ gitea.repository_owner }}/terraform/state/k3s-proxmox
 #           TF_HTTP_USERNAME: ${{ vars.STATE_USER }}
 #           TF_HTTP_PASSWORD: ${{ secrets.STATE_TOKEN }}
@@ -103,4 +109,4 @@
 
 #       - name: Remove credentials
 #         if: always()
-#         run: rm -f terraform/terraform.tfvars ~/.ssh/id_ed25519 kubeconfig
+#         run: rm -f ~/.ssh/id_ed25519 kubeconfig

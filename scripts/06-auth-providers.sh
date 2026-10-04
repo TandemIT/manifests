@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Push Gitea's OIDC/LDAP providers from terraform.tfvars (their only copy)
+# Push Gitea's OIDC/LDAP providers from terraform.tfvars (or TF_VAR_* in CI)
 # into the cluster: one Secret per provider in gitea (key names the chart's
 # existingSecret expects), deletes Secrets of removed providers, and
 # regenerates the non-secret apps/gitea/values-oidc.yaml / values-ldap.yaml.
@@ -25,7 +25,7 @@ require_binary kubectl python3
 [[ -n "${TF_BIN}" ]] || die "tofu not found"
 require_cluster
 
-# Evaluates the variable from the config + terraform.tfvars (not from state,
+# Evaluates the variable from the config + tfvars/TF_VAR_* (not from state,
 # which only changes on apply), so a tfvars edit takes effect immediately.
 # base64 keeps the console's HCL string quoting out of the JSON. Any failure
 # aborts: an empty result here would delete every provider secret below.

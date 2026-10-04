@@ -5,6 +5,8 @@
 terraform.tfvars
 *.tfvars
 !terraform.tfvars.example
+# Non-sensitive settings, committed; credentials stay in terraform.tfvars
+!terraform/cluster.auto.tfvars
 crash.log
 *.log
 # Local-backend override for bootstraps without Gitea (COMMANDS.md, State)
