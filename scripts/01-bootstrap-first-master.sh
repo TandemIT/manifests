@@ -21,10 +21,7 @@ export KUBECONFIG
 
 require_root
 
-step_header 1 "Installing node prerequisites"
-install_node_prerequisites
-
-step_header 2 "Placing kube-vip static pod"
+step_header 1 "Placing kube-vip static pod"
 # The template pins eth0/172.16.10.50; rewrite for this node's actual uplink
 # (cloud images name it ens18/enp*) and the configured VIP.
 DEFAULT_IFACE="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
@@ -35,7 +32,7 @@ sed -e "s|value: eth0|value: ${VIP_INTERFACE}|" \
   "${MANIFESTS_DIR}/platform/system/kube-vip.yaml" > "${STATIC_POD_DIR}/kube-vip.yaml"
 log "kube-vip static pod placed (interface ${VIP_INTERFACE}, VIP ${VIP})"
 
-step_header 3 "Installing K3s ${K3S_VERSION} as first control plane"
+step_header 2 "Installing K3s ${K3S_VERSION} as first control plane"
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
   INSTALL_K3S_EXEC="server \
@@ -47,7 +44,7 @@ curl -sfL https://get.k3s.io | \
     --write-kubeconfig-mode 600" \
   sh -
 
-step_header 4 "Waiting for node to become Ready"
+step_header 3 "Waiting for node to become Ready"
 until kubectl get nodes 2>/dev/null | grep -E "Ready\\s" | grep -v "NotReady" | grep -q "."; do
   sleep 5
 done
@@ -55,7 +52,7 @@ log "Node is Ready"
 
 # The first apply may fail partially: IPAddressPool/L2Advertisement need
 # MetalLB's webhook, which isn't up yet. Wait for it, then re-apply.
-step_header 5 "Deploying network foundation (platform/)"
+step_header 4 "Deploying network foundation (platform/)"
 kubectl apply -k "${MANIFESTS_DIR}/platform" || \
   log "First pass incomplete (MetalLB webhook not ready) - re-applying after rollout"
 kubectl rollout status deployment/controller -n metallb-system --timeout=180s
@@ -66,7 +63,7 @@ log "MetalLB + CoreDNS override applied from platform/"
 # are --no-owner dumps). The runner tokens start as placeholders: the
 # runner-token-bootstrap Job replaces the registration token once Gitea is
 # up; gitea-api-token stays one while KEDA autoscaling is pending.
-step_header 6 "Generating bootstrap secrets"
+step_header 5 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
 done
@@ -100,7 +97,7 @@ for secret in gitea-runner-registration gitea-api-token; do
   bootstrap_secret "${secret}" gitea-runners token=placeholder-update-after-gitea-is-up
 done
 
-step_header 7 "Installing Argo CD"
+step_header 6 "Installing Argo CD"
 # --server-side: the ApplicationSet CRD exceeds client-side apply's 256 KiB
 # annotation limit.
 # `|| true`: on a fresh cluster the Certificate/IngressRoute/Middleware objects
@@ -114,7 +111,7 @@ kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
 kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=300s
 kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
 
-step_header 8 "Applying root app-of-apps"
+step_header 7 "Applying root app-of-apps"
 kubectl apply -f "${MANIFESTS_DIR}/argocd/root-app.yaml"
 log "Argo CD now reconciles the cluster from git (argocd/apps/)"
 

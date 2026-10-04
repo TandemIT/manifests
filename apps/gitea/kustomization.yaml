@@ -10,7 +10,6 @@ resources:
   - middleware.yaml
   - ingressroute-tcp.yaml
   - networkpolicy.yaml
-  - networkpolicy-certmanager.yaml
   - networkpolicy-valkey.yaml
   - networkpolicy-postgresql.yaml
   - networkpolicy-garage.yaml

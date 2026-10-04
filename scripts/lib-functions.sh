@@ -31,49 +31,6 @@ require_cluster() {
   kubectl cluster-info >/dev/null 2>&1 || die "Cannot reach Kubernetes cluster"
 }
 
-verify_kubeconfig() {
-  [[ -n "${KUBECONFIG:-}" ]] || die "KUBECONFIG is not set"
-  [[ -f "${KUBECONFIG}" ]] || die "KUBECONFIG file not found: ${KUBECONFIG}"
-}
-
-wait_for_resource() {
-  local resource="$1"
-  local timeout="${2:-120}"
-  local elapsed=0
-  local interval=5
-
-  log "Waiting for ${resource}..."
-  while [[ $elapsed -lt $timeout ]]; do
-    if kubectl get ${resource} >/dev/null 2>&1; then
-      log "${resource} found"
-      return 0
-    fi
-    sleep ${interval}
-    elapsed=$((elapsed + interval))
-  done
-
-  die "Timeout waiting for ${resource}"
-}
-
-wait_for_resource_deleted() {
-  local resource="$1"
-  local timeout="${2:-120}"
-  local elapsed=0
-  local interval=5
-
-  log "Waiting for ${resource} to be deleted..."
-  while [[ $elapsed -lt $timeout ]]; do
-    if ! kubectl get ${resource} >/dev/null 2>&1; then
-      log "${resource} deleted"
-      return 0
-    fi
-    sleep ${interval}
-    elapsed=$((elapsed + interval))
-  done
-
-  die "Timeout waiting for ${resource} to be deleted"
-}
-
 ensure_namespace() {
   local namespace="$1"
 
@@ -85,65 +42,12 @@ ensure_namespace() {
   fi
 }
 
-delete_namespace() {
-  local namespace="$1"
-
-  log "Deleting namespace: ${namespace}"
-  kubectl delete namespace "${namespace}" --ignore-not-found=true >/dev/null 2>&1 || true
-}
-
 apply_kustomization() {
   local path="$1"
   shift
   [[ -d "${path}" ]] || die "Kustomization path not found: ${path}"
   log "Applying: ${path}"
   kubectl apply -k "${path}" "$@"
-}
-
-apply_manifests() {
-  local path="$1"
-  shift
-  [[ -d "${path}" ]] || die "Manifest path not found: ${path}"
-  log "Applying: ${path}"
-  kubectl apply -f "${path}" "$@"
-}
-
-wait_for_port() {
-  local port="$1"
-  local timeout="${2:-120}"
-  local elapsed=0
-  local interval=2
-
-  log "Waiting for localhost:${port} to be accessible..."
-  while [[ $elapsed -lt $timeout ]]; do
-    if timeout 2 bash -c ">/dev/tcp/localhost/${port}" 2>/dev/null; then
-      log "localhost:${port} is accessible"
-      return 0
-    fi
-    sleep ${interval}
-    elapsed=$((elapsed + interval))
-  done
-
-  die "Timeout waiting for localhost:${port}"
-}
-
-wait_for_http() {
-  local url="$1"
-  local timeout="${2:-120}"
-  local elapsed=0
-  local interval=3
-
-  log "Waiting for HTTP endpoint: ${url}"
-  while [[ $elapsed -lt $timeout ]]; do
-    if curl -sf "${url}" >/dev/null 2>&1; then
-      log "HTTP endpoint accessible: ${url}"
-      return 0
-    fi
-    sleep ${interval}
-    elapsed=$((elapsed + interval))
-  done
-
-  die "Timeout waiting for HTTP endpoint: ${url}"
 }
 
 section_header() {
@@ -158,19 +62,4 @@ step_header() {
   local step_num="$1"
   local description="$2"
   log "Step ${step_num}: ${description}"
-}
-
-# No-op hook that scripts/01-03 call as step 1.
-install_node_prerequisites() {
-  return 0
-}
-
-on_exit() {
-  local handler="$1"
-  # shellcheck disable=SC2064 # expand now on purpose: $handler is local
-  trap "${handler}" EXIT
-}
-
-cleanup_jobs() {
-  jobs -p | xargs -r kill 2>/dev/null || true
 }

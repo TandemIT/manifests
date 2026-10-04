@@ -19,10 +19,7 @@ STATIC_POD_DIR="/var/lib/rancher/k3s/agent/pod-manifests"
 
 require_root
 
-step_header 1 "Installing node prerequisites"
-install_node_prerequisites
-
-step_header 2 "Placing kube-vip static pod"
+step_header 1 "Placing kube-vip static pod"
 # Same interface/VIP rewrite as 01-bootstrap-first-master.sh.
 DEFAULT_IFACE="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
 VIP_INTERFACE="${VIP_INTERFACE:-${DEFAULT_IFACE:-eth0}}"
@@ -32,7 +29,7 @@ sed -e "s|value: eth0|value: ${VIP_INTERFACE}|" \
   "${MANIFESTS_DIR}/platform/system/kube-vip.yaml" > "${STATIC_POD_DIR}/kube-vip.yaml"
 log "kube-vip static pod placed (interface ${VIP_INTERFACE}, VIP ${VIP})"
 
-step_header 3 "Joining K3s cluster as control plane via ${VIP}:6443"
+step_header 2 "Joining K3s cluster as control plane via ${VIP}:6443"
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${K3S_VERSION}" \
   K3S_TOKEN="${K3S_TOKEN}" \
