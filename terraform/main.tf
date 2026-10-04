@@ -115,14 +115,11 @@ resource "proxmox_vm_qemu" "k3s_control_plane" {
 
   # Public VLAN: no address. MetalLB answers ARP for the LoadBalancer IP here;
   # Ansible brings the link up as "public0" (system-utils-install.yml).
-  dynamic "network" {
-    for_each = var.public_vlan_tag == null ? [] : [1]
-    content {
-      id     = 1
-      model  = "virtio"
-      bridge = var.bridge
-      tag    = var.public_vlan_tag
-    }
+  network {
+    id     = 1
+    model  = "virtio"
+    bridge = var.bridge
+    tag    = var.public_vlan_tag
   }
 
   serial {
@@ -227,14 +224,11 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   }
 
   # See k3s_control_plane.
-  dynamic "network" {
-    for_each = var.public_vlan_tag == null ? [] : [1]
-    content {
-      id     = 1
-      model  = "virtio"
-      bridge = var.bridge
-      tag    = var.public_vlan_tag
-    }
+  network {
+    id     = 1
+    model  = "virtio"
+    bridge = var.bridge
+    tag    = var.public_vlan_tag
   }
 
   serial {
@@ -268,8 +262,9 @@ resource "proxmox_vm_qemu" "k3s_worker" {
   }
 }
 
-# MAC of each VM's public-VLAN NIC (network id 1), null when there is none.
-# Ansible matches on it to name the link "public0".
+# MAC of each VM's public-VLAN NIC (network id 1). null for VMs created
+# before the NIC existed (network is in ignore_changes); Ansible then skips
+# public0 on them. Ansible matches on the MAC to name the link "public0".
 locals {
   control_plane_public_macs = [
     for vm in proxmox_vm_qemu.k3s_control_plane :
@@ -319,7 +314,7 @@ resource "local_file" "ansible_inventory" {
           k3s_vip                 = var.vip
           manifests_repo          = var.manifests_repo
           manifests_revision      = var.manifests_revision
-          public_gateway          = var.public_vlan_tag == null ? null : var.public_gateway
+          public_gateway          = var.public_gateway
         }
       }
       k3s_cluster = {

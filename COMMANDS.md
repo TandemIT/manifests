@@ -138,8 +138,8 @@ Don't rebuild `k3s_control_plane[0]` this way. `deploy.sh` always runs
 `scripts/01` (`--cluster-init`) on that node, so a fresh VM there would start
 a new cluster.
 
-Setting `public_vlan_tag` later adds the public NIC only to new VMs, so
-rebuild each existing node this way to get it.
+Changes to `public_vlan_tag` (and the NIC itself, on VMs created before it
+existed) reach only new VMs, so rebuild each existing node this way to get them.
 
 Lowering `control_plane_count` or `worker_count` deletes the highest-numbered
 node without draining it, so drain it first.

@@ -78,15 +78,16 @@ variable "vlan_tag" {
   default     = 0
 }
 
-# Only new VMs get the NIC: network is in ignore_changes (main.tf).
+# Required: MetalLB announces only on public0 (platform/metallb). Changes reach
+# only new VMs: network is in ignore_changes (main.tf).
 variable "public_vlan_tag" {
-  description = "VLAN of the MetalLB public IP's NIC: null = none, 0 = untagged/native, N = tag N"
+  description = "VLAN of the MetalLB public IP's NIC: 0 = untagged/native, N = tag N"
   type        = number
-  default     = null
+  nullable    = false
 
   validation {
-    condition     = var.public_vlan_tag == null ? true : var.public_vlan_tag >= 0 && var.public_vlan_tag <= 4094
-    error_message = "public_vlan_tag must be null, 0 (untagged) or 1-4094."
+    condition     = var.public_vlan_tag >= 0 && var.public_vlan_tag <= 4094
+    error_message = "public_vlan_tag must be 0 (untagged) or 1-4094."
   }
 }
 
@@ -94,13 +95,13 @@ variable "public_vlan_tag" {
 # public NIC go back out through it (policy routing): the router drops them
 # when they leave via the internal VLAN instead.
 variable "public_gateway" {
-  description = "Gateway on the public VLAN (required when public_vlan_tag is set)"
+  description = "Gateway on the public VLAN"
   type        = string
-  default     = null
+  nullable    = false
 
   validation {
-    condition     = var.public_vlan_tag == null || can(cidrhost("${var.public_gateway}/32", 0))
-    error_message = "public_gateway must be an IPv4 address when public_vlan_tag is set."
+    condition     = can(cidrhost("${var.public_gateway}/32", 0))
+    error_message = "public_gateway must be an IPv4 address."
   }
 }
 

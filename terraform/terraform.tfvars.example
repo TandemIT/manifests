@@ -19,8 +19,9 @@ vm_id_start  = 200 # control plane: 200..; workers: 300..
 storage      = "local-zfs"
 bridge       = "vmbr0"
 vlan_tag     = 0 # 0 = untagged; set when the bridge is VLAN-aware
-# public_vlan_tag = 0 # 2nd NIC (no address) for the MetalLB IP: 0 = untagged/native VLAN, N = tag N
-# public_gateway  = "203.0.113.1" # required with public_vlan_tag: router on that VLAN
+# Required: 2nd NIC (no address) for the MetalLB IP, and the router on its VLAN.
+public_vlan_tag = 0             # 0 = untagged/native VLAN, N = tag N
+public_gateway  = "203.0.113.1" # replace with the public VLAN's router
 gateway      = "172.16.10.1"
 nameserver   = "172.16.10.1"
 searchdomain = "local"

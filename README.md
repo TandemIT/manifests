@@ -110,8 +110,8 @@ apps/        manifests and Helm values per component
 
 ## Known limitations
 
-- MetalLB announces only on `public0` (`platform/metallb/l2advertisement.yaml`). With `public_vlan_tag` unset, which is the default and also the case for manual setup, no `public0` exists and the public IP is never announced.
-- Setting `public_vlan_tag` on an existing cluster adds the NIC only to new or rebuilt VMs, because `network` is in `ignore_changes`.
+- MetalLB announces only on `public0` (`platform/metallb/l2advertisement.yaml`). Terraform always creates it, but with manual setup you have to create `public0` yourself, or the public IP is never announced.
+- The public NIC reaches only new or rebuilt VMs, because `network` is in `ignore_changes`. VMs created before it existed get no `public0`, and Ansible skips them.
 - Every PVC uses K3s `local-path`. Volumes are pinned to one node, can't be expanded in place, and aren't replicated at the storage level.
 - PostgreSQL HA has two nodes and no witness, so a network partition between them has no arbiter.
 - The PostgreSQL, pgpool and Valkey images are the chart defaults from `bitnamilegacy/*`, which is frozen and gets no security updates.
