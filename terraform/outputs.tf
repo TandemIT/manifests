@@ -29,13 +29,13 @@ output "kubeconfig_command" {
 }
 
 output "gitea_oidc_providers" {
-  description = "Passthrough of var.gitea_oidc_providers for scripts/06-seal-secrets.sh"
+  description = "Passthrough of var.gitea_oidc_providers for scripts/06-auth-providers.sh"
   value       = var.gitea_oidc_providers
   sensitive   = true
 }
 
 output "gitea_ldap_providers" {
-  description = "Passthrough of var.gitea_ldap_providers for scripts/06-seal-secrets.sh"
+  description = "Passthrough of var.gitea_ldap_providers for scripts/06-auth-providers.sh"
   value       = var.gitea_ldap_providers
   sensitive   = true
 }

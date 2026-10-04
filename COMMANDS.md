@@ -22,7 +22,6 @@ MetalLB manages LoadBalancer services (L2 mode):
 | MetalLB   | v0.14.9              |
 | kured     | v1.15.0              |
 | system-upgrade-controller | v0.20.1 |
-| sealed-secrets | chart 2.17.4     |
 | KEDA      | v2.15.1              |
 | Traefik   | v3.3.4 (chart 34.4.1) |
 | Gitea     | 1.27.3 (chart 12.7.0) |
@@ -35,9 +34,7 @@ MetalLB manages LoadBalancer services (L2 mode):
 - All nodes can reach each other.
 - This repository is cloned to the same path on every node (e.g. `/opt/manifests`).
 - Nodes run a supported Linux distro (Ubuntu 24.04 / Debian 12 recommended).
-- `curl`, `python3`, `openssl` and `kubeseal` available on the deploy host (`./setup.sh` installs kubeseal).
-- `sealed-secrets-key.yaml` in the repo root — the keypair the SealedSecrets in
-  git are encrypted for (see [Secrets](#secrets-day-2)). Never committed.
+- `curl`, `python3` and `kubectl` available on the deploy host (`./setup.sh` installs kubectl).
 - Override `VIP` / `K3S_VERSION` via environment variables if needed; the
   kube-vip network interface is auto-detected from the default route
   (override with `VIP_INTERFACE`).
@@ -58,17 +55,16 @@ automated:
 `deploy.sh` provisions the VMs, generates `ansible/inventory.yml` from the
 Terraform variables, runs `scripts/01..03` on the right nodes via Ansible,
 fetches a kubeconfig (pointed at the VIP) to the repo root, and waits for the
-Argo CD applications to converge. Before provisioning anything it creates
-`sealed-secrets-key.yaml` if missing and aborts if any committed SealedSecret
-does not decrypt with it. Steps 1–4 below are the manual equivalent.
+Argo CD applications to converge. Right after Ansible it pushes the Gitea
+OIDC/LDAP credentials from `terraform.tfvars` (`scripts/06-auth-providers.sh`).
+Steps 1–4 below are the manual equivalent; run that script yourself after them.
 
 ---
 
 ## Step 1 — Bootstrap master1
 
 ```bash
-# On master1, as root — first copy sealed-secrets-key.yaml from the deploy
-# host into the repo root (or point SEALED_SECRETS_KEY at it):
+# On master1, as root:
 sudo bash install.sh
 ```
 
@@ -77,7 +73,7 @@ This script:
 1. Copies the kube-vip static pod to `/var/lib/rancher/k3s/agent/pod-manifests/`
 2. Installs K3s with `--cluster-init`
 3. Applies the network foundation from `platform/` (MetalLB + IP pool, CoreDNS override) — directly via `kubectl apply -k`, outside Argo CD
-4. Generates the bootstrap secrets (random fallbacks; committed SealedSecrets override them) and installs the sealed-secrets keypair
+4. Generates the bootstrap secrets
 5. Installs Argo CD and applies the root app-of-apps — from here Argo CD deploys everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...)
 6. Prints the join token and commands for the remaining nodes
 
@@ -210,43 +206,25 @@ commit and push.
 
 ## Secrets (Day-2)
 
-Static secrets live in git as SealedSecrets, encrypted for the keypair in
-`sealed-secrets-key.yaml` (repo root on the deploy host, gitignored). That
-key — not one the controller invents — is installed on every new cluster by
-`scripts/01`, so a rebuild decrypts what is already in git. **Keep an
-off-host backup of it**: losing it means resealing everything, leaking it
-exposes everything.
+No secret is stored in git. Two sources:
+
+- **Random, generated once** by `scripts/01-bootstrap-first-master.sh`
+  (`gitea-admin`, both PostgreSQL secrets, `garage-rpc`, `anubis-key`, runner
+  placeholders). Never overwritten by a re-run.
+- **Chosen by you** in `terraform/terraform.tfvars` (`gitea_oidc_providers`,
+  `gitea_ldap_providers`), pushed by `scripts/06-auth-providers.sh`.
 
 ```bash
-bash scripts/sealing-key.sh ensure   # create the keypair if missing
-bash scripts/sealing-key.sh verify   # every committed SealedSecret decrypts with it?
-
-# Adopt the key of an existing cluster (it predates sealed-secrets-key.yaml):
-kubectl get secret -n kube-system \
-  -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealed-secrets-key.yaml
-```
-
-`scripts/06-seal-secrets.sh` seals them all on first run (with or without a
-cluster); to **rotate** one, delete its `sealedsecret-*.yaml` file and re-run
-the script, or reseal by hand:
-
-```bash
-# Update the Gitea OIDC provider credentials (one secret per provider slug,
-# gitea-oidc-<slug>; the existing provider is "authentik"):
-kubectl create secret generic gitea-oidc-authentik \
-  --namespace gitea \
-  --from-literal=key="<CLIENT_ID>" \
-  --from-literal=secret="<CLIENT_SECRET>" \
-  --dry-run=client -o yaml \
-  | kubeseal --cert <(bash scripts/sealing-key.sh cert /dev/stdout) --format yaml -n gitea \
-  > apps/gitea/sealedsecret-gitea-oidc-authentik.yaml
-# then: git commit + push — Argo CD applies it on sync.
+# Add/change/remove an OIDC or LDAP provider: edit terraform.tfvars, then
+bash scripts/06-auth-providers.sh
+# commit + push apps/gitea/values-oidc.yaml / values-ldap.yaml if it says they
+# changed, then restart Gitea so it re-reads the credentials:
+kubectl rollout restart deployment/gitea -n gitea
 
 # Rotate the Anubis signing key (causes all active challenge cookies to expire):
-rm apps/anubis/sealedsecret-anubis-key.yaml
 kubectl delete secret anubis-key -n anubis
-bash scripts/06-seal-secrets.sh   # reseals with a fresh random key
-git add -A && git commit && git push
+kubectl create secret generic anubis-key -n anubis \
+  --from-literal=ED25519_PRIVATE_KEY_HEX="$(openssl rand -hex 32)"
 kubectl rollout restart deployment/anubis -n anubis
 ```
 

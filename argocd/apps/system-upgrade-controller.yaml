@@ -1,5 +1,5 @@
 # system-upgrade-controller - automated K3s upgrades. Independent of
-# everything else; wave 1 alongside keda/kured/sealed-secrets. CRDs and Plan
+# everything else; wave 1 alongside keda/kured. CRDs and Plan
 # CRs sync together — Argo CD applies CRDs before custom resources within
 # the same wave regardless of manifest order.
 apiVersion: argoproj.io/v1alpha1

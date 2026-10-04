@@ -27,8 +27,6 @@ docs/pve-info-checklist.md
 # SSH keys
 *.pem
 *.key
-# Sealed-secrets PRIVATE keypair - see scripts/sealing-key.sh
-sealed-secrets-key.yaml
 id_rsa*
 id_ed25519*
 

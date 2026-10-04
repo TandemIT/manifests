@@ -50,7 +50,8 @@ manifests_revision = "master"
 # provider/application for each in your identity provider (e.g. Authentik)
 # yourself, then add an entry below, keyed by a short slug - this repo does
 # not create or manage identity-provider resources. Leave empty ({}) to
-# skip OIDC (scripts/06-seal-secrets.sh will prompt interactively instead).
+# skip OIDC. deploy.sh pushes these via scripts/06-auth-providers.sh;
+# re-run that script after changing them.
 gitea_oidc_providers = {
   # authentik = {
   #   display_name  = "Authentik"

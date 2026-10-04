@@ -9,8 +9,7 @@
 #      Deliberately outside Argo CD so the cluster's addresses are in place
 #      and verifiable before GitOps starts, and so MetalLB can be tuned
 #      without self-heal reverting changes.
-#   4. Bootstrap secrets (random fallbacks; SealedSecrets in git win) and
-#      the sealed-secrets keypair those SealedSecrets are encrypted for
+#   4. Bootstrap secrets (random material that must never live in git)
 #   5. Argo CD installation + the root app-of-apps
 # Everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...) is
 # deployed by Argo CD from the argocd/apps/ Applications.
@@ -85,12 +84,10 @@ log "MetalLB + CoreDNS override applied from platform/"
 # wave 0 of the gitea-runner Application) mints the registration token
 # automatically once Argo CD takes over. gitea-api-token stays a placeholder
 # while KEDA autoscaling is PENDING (see apps/gitea-runner/scaledobject.yaml).
-#
-# Every secret here is a fallback: it is annotated sealedsecrets.bitnami.com/
-# managed=true, so when git holds a SealedSecret of the same name (sealed by
-# scripts/06-seal-secrets.sh) the controller overwrites it with the sealed
-# value at wave 1-4, before any consumer starts. Without the annotation the
-# controller refuses to touch a secret it did not create.
+# None of these need to survive a rebuild: the PostgreSQL backups are
+# role-less pg_dumps that restore under fresh credentials, and the rest are
+# cluster-internal. The OIDC/LDAP credentials you choose yourself come from
+# terraform.tfvars via scripts/06-auth-providers.sh instead.
 step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
@@ -108,7 +105,6 @@ bootstrap_secret() {
     args+=(--from-literal="${kv}")
   done
   kubectl create secret generic "${name}" -n "${ns}" "${args[@]}" >/dev/null
-  kubectl annotate secret "${name}" -n "${ns}" sealedsecrets.bitnami.com/managed=true >/dev/null
   log "Created: ${ns}/${name}"
 }
 
@@ -127,26 +123,7 @@ for secret in gitea-runner-registration gitea-api-token; do
   bootstrap_secret "${secret}" gitea-runners token=placeholder-update-after-gitea-is-up
 done
 
-# The SealedSecrets in git are encrypted for one specific keypair. Installed
-# before Argo CD so the sealed-secrets controller (wave 1) adopts it instead
-# of generating a fresh key that cannot decrypt anything already committed.
-# deploy.sh stages it from the deploy host (see scripts/sealing-key.sh); for
-# a manual bootstrap, copy sealed-secrets-key.yaml into the repo root first.
-step_header 7 "Installing sealed-secrets key"
-SEALED_SECRETS_KEY="${SEALED_SECRETS_KEY:-${MANIFESTS_DIR}/sealed-secrets-key.yaml}"
-if [[ -f "${SEALED_SECRETS_KEY}" ]]; then
-  kubectl apply -n kube-system -f "${SEALED_SECRETS_KEY}" >/dev/null
-  log "Installed sealing key from ${SEALED_SECRETS_KEY}"
-elif [[ -n "$(kubectl get secret -n kube-system \
-    -l sealedsecrets.bitnami.com/sealed-secrets-key=active -o name)" ]]; then
-  log "Sealing key already present in kube-system"
-else
-  warn "No sealing key at ${SEALED_SECRETS_KEY} — the controller will generate"
-  warn "its own, and the SealedSecrets committed in git will NOT decrypt."
-  warn "See scripts/sealing-key.sh."
-fi
-
-step_header 8 "Installing Argo CD"
+step_header 7 "Installing Argo CD"
 # --server-side: the applicationsets.argoproj.io CRD's schema exceeds the
 # 262144-byte cap kubectl's client-side apply enforces on the
 # last-applied-configuration annotation.
@@ -172,7 +149,7 @@ kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
 kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=300s
 kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
 
-step_header 9 "Applying root app-of-apps"
+step_header 8 "Applying root app-of-apps"
 kubectl apply -f "${MANIFESTS_DIR}/argocd/root-app.yaml"
 log "Argo CD now reconciles the cluster from git (argocd/apps/)"
 

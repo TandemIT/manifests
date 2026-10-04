@@ -154,9 +154,9 @@ variable "manifests_revision" {
   default     = "master"
 }
 
-# Passthrough only - not used by any resource here. Lets scripts/06-seal-secrets.sh
-# read a local, gitignored input (this file) instead of prompting
-# interactively, and supports any number of providers. Create the OAuth2
+# Passthrough only - not used by any resource here. scripts/06-auth-providers.sh
+# reads it and pushes the credentials into the cluster as Secrets, so they
+# never touch git. Supports any number of providers. Create the OAuth2
 # provider/application for each one yourself (e.g. in Authentik, Keycloak,
 # ...) and add an entry here, keyed by a short slug used in the secret name
 # and Gitea's callback URL (/user/oauth2/<slug>/callback). Leave empty ({})

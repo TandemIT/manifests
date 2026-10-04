@@ -4,9 +4,7 @@
 #
 # Prerequisites: terraform/terraform.tfvars filled in (see setup.sh), local
 # commits PUSHED to the manifests repo (nodes and Argo CD pull from git),
-# the VM template with qemu-guest-agent preinstalled, and - when git already
-# holds SealedSecrets - the sealed-secrets-key.yaml they were sealed for
-# (generated here on first run; see scripts/sealing-key.sh).
+# and the VM template with qemu-guest-agent preinstalled.
 #
 # Fully non-interactive. Re-running is safe: the infra is declarative and
 # the bootstrap scripts are idempotent.
@@ -40,6 +38,13 @@ if [ -z "${TF_BIN}" ]; then
 fi
 echo -e "Using IaC binary: ${GREEN}${TF_BIN}${NC}"
 
+# Needed after Ansible to push the Gitea OIDC/LDAP secrets - checked up
+# front so a missing binary does not stop the run halfway.
+if ! command -v kubectl &> /dev/null; then
+    echo -e "${RED}Error: kubectl not found. Run ./setup.sh first.${NC}"
+    exit 1
+fi
+
 if ! command -v ansible-playbook &> /dev/null; then
     echo -e "${YELLOW}Ansible not found. Installing...${NC}"
     sudo apt update
@@ -50,17 +55,6 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     echo -e "${YELLOW}Warning: uncommitted changes in this repo. Nodes and Argo CD${NC}"
     echo -e "${YELLOW}pull from the git remote - unpushed changes will NOT be deployed.${NC}"
 fi
-
-# The SealedSecrets in git only decrypt with the keypair they were sealed
-# for. Checked before anything is provisioned: a mismatch would otherwise
-# surface 20 minutes later as Gitea stuck on a secret that never appears.
-step "Step 0: Checking the sealed-secrets key"
-if ! command -v kubeseal &> /dev/null; then
-    echo -e "${RED}Error: kubeseal not found. Run ./setup.sh first.${NC}"
-    exit 1
-fi
-bash scripts/sealing-key.sh ensure
-bash scripts/sealing-key.sh verify
 
 step "Step 1: Provisioning VMs (also generates ansible/inventory.yml)"
 "${TF_BIN}" -chdir=terraform init -input=false
@@ -95,13 +89,12 @@ ansible-playbook -i ansible/inventory.yml ansible/k3s-install.yml
 
 export KUBECONFIG="$(pwd)/kubeconfig"
 
-if ! command -v kubectl &> /dev/null; then
-    echo -e "${YELLOW}kubectl not found on this host - skipping the Argo CD convergence wait.${NC}"
-    echo "Watch from any master: kubectl get applications -n argocd -w"
-    exit 0
-fi
+# OIDC/LDAP credentials live only in terraform.tfvars; Gitea (wave 6) waits
+# on these secrets, so they go in while Argo CD works through earlier waves.
+step "Step 5: Pushing Gitea login providers from terraform.tfvars"
+TF_BIN="${TF_BIN}" bash scripts/06-auth-providers.sh
 
-step "Step 5: Waiting for Argo CD to converge (up to 20 min)"
+step "Step 6: Waiting for Argo CD to converge (up to 20 min)"
 deadline=$((SECONDS + 1200))
 while :; do
     # Healthy when every Application reports Synced+Healthy (root app included).

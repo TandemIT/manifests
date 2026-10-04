@@ -42,10 +42,10 @@ This repository contains all Kubernetes manifests needed to deploy and operate a
 | Control-plane HA           | kube-vip (ARP)                         |
 | Automated node maintenance | kured                                  |
 
-Everything is managed through **Kustomize**, with **Helm** charts (via Argo CD) for Traefik, cert-manager, Sealed Secrets and Gitea. The cluster is split into two ownership layers:
+Everything is managed through **Kustomize**, with **Helm** charts (via Argo CD) for Traefik, cert-manager and Gitea. The cluster is split into two ownership layers:
 
 - **Network foundation (`platform/`)** — kube-vip, MetalLB + IP pool, and the CoreDNS override. This layer defines the cluster's addresses and is applied imperatively by `scripts/01-bootstrap-first-master.sh` (`kubectl apply -k platform/`), *not* by Argo CD. That keeps it verifiable before GitOps starts and tunable without self-heal reverting changes; day-2 changes are a re-run of the same apply.
-- **Everything above it** — driven by **Argo CD** using the app-of-apps pattern: the bootstrap script installs Argo CD and applies the root Application (`argocd/root-app.yaml`); KEDA, kured, system-upgrade-controller, Sealed Secrets, Traefik, cert-manager, Anubis, Gitea, runners, and Garage are reconciled from git via the Applications in `argocd/apps/`.
+- **Everything above it** — driven by **Argo CD** using the app-of-apps pattern: the bootstrap script installs Argo CD and applies the root Application (`argocd/root-app.yaml`); KEDA, kured, system-upgrade-controller, Traefik, cert-manager, Anubis, Gitea, runners, and Garage are reconciled from git via the Applications in `argocd/apps/`.
 
 The shell scripts only cover what a GitOps controller cannot do: node bootstrap, the network foundation, secret generation, and one-time runtime initialization (runner tokens, Garage layout).
 
@@ -155,7 +155,6 @@ Deployed by Argo CD via the Applications in `argocd/apps/`. Ordering is encoded 
 | KEDA                       | v2.15.1 | `keda`           | Installed, currently unused (see [CI/CD Runners](#cicd-runners)) |
 | kured                      | v1.15.0 | `kube-system`    | Automated rolling node reboot (weekdays 02:00–05:00)            |
 | system-upgrade-controller  | v0.20.1 | `system-upgrade` | Automated K3s binary upgrades (weekdays 05:30–07:00)            |
-| sealed-secrets             | chart 2.17.4 | `kube-system` | Encrypts secrets so they're safe to commit to git                |
 | Traefik                    | v3.3.4  | `traefik`        | Ingress controller + TCP proxy — 2 replicas, PDB enabled        |
 | cert-manager               | v1.15.3 | `cert-manager`   | Automated TLS certificates via Let's Encrypt                    |
 | Gitea                      | 1.27.3  | `gitea`          | Self-hosted Git service with Actions support                    |
@@ -265,7 +264,7 @@ The PostgreSQL HA chart deploys:
 
 This means a PostgreSQL primary failure causes a brief pause while pgpool promotes the standby, after which Gitea automatically reconnects — rather than a full outage until a pod is rescheduled.
 
-**Credentials**: `postgresql-ha.global.postgresql.existingSecret` / `...pgpool.existingSecret` in `apps/gitea/values.yaml` point at `postgresql-ha-credentials` and `postgresql-ha-pgpool-credentials` — sealed the same way as `gitea-admin` (see [Secrets](#secrets-never-committed)) — rather than the chart's own published default passwords.
+**Credentials**: `postgresql-ha.global.postgresql.existingSecret` / `...pgpool.existingSecret` in `apps/gitea/values.yaml` point at `postgresql-ha-credentials` and `postgresql-ha-pgpool-credentials` — generated per cluster by `scripts/01-bootstrap-first-master.sh` (see [Secrets](#secrets-never-committed)) — rather than the chart's own published default passwords.
 
 **Drain protection**: both `postgresql-ha.postgresql.pdb` and `postgresql-ha.pgpool.pdb` default to `create: true` in the chart itself (`maxUnavailable: 1` each) and are not overridden here, so a PodDisruptionBudget already exists for both without needing to be declared in this repo's values.
 
@@ -439,8 +438,7 @@ Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
 Provisions the VMs on Proxmox and runs the entire bootstrap end-to-end from a deploy host, with no interactive steps:
 
 ```bash
-./setup.sh     # one-time: prereq check (installs OpenTofu + kubeseal if needed), creates terraform/terraform.tfvars
-# restore sealed-secrets-key.yaml to the repo root if git already holds SealedSecrets (see Secrets below)
+./setup.sh     # one-time: prereq check (installs OpenTofu + kubectl if needed), creates terraform/terraform.tfvars
 # edit terraform/terraform.tfvars (Proxmox API token, template, network)
 git push       # nodes and Argo CD pull the manifests from git
 ./deploy.sh    # tofu/terraform → VMs → Ansible → scripts/01..03 → Argo CD converges
@@ -448,7 +446,7 @@ git push       # nodes and Argo CD pull the manifests from git
 
 `deploy.sh` is fully non-interactive and safe to re-run. It auto-detects the IaC binary (OpenTofu preferred, Terraform as fallback; override with `TF_BIN=`). The apply also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
 
-Before provisioning anything, `deploy.sh` creates `sealed-secrets-key.yaml` if it is missing and aborts if any committed SealedSecret does not decrypt with it, so a key mismatch fails in seconds instead of as a stuck Gitea twenty minutes later.
+After Ansible, `deploy.sh` pushes the Gitea OIDC/LDAP credentials from `terraform.tfvars` into the cluster (`scripts/06-auth-providers.sh`) — they never touch git.
 
 Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` → `145.89.192.138`.
 
@@ -469,7 +467,6 @@ Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-gu
 #    foundation (MetalLB, CoreDNS) + bootstrap secrets + Argo CD + root
 #    app-of-apps. From this point Argo CD deploys the application stack
 #    from git; the network layer is already up and verifiable.
-#    Copy sealed-secrets-key.yaml into the repo root first (see Secrets).
 sudo bash scripts/01-bootstrap-first-master.sh
 
 # 2. Join the remaining control-plane nodes (run on master2, master3)
@@ -477,6 +474,10 @@ sudo K3S_TOKEN='<token-from-step-1>' bash scripts/02-join-control-plane.sh
 
 # 3. Join worker nodes (run on worker1–3)
 sudo K3S_TOKEN='<token-from-step-1>' bash scripts/03-join-worker.sh
+
+# 4. From a host with kubectl access and terraform/terraform.tfvars: push the
+#    Gitea OIDC/LDAP credentials (see Secrets).
+bash scripts/06-auth-providers.sh
 
 # The runner registration token and Garage layout/credentials mint
 # automatically via in-cluster bootstrap Jobs once Gitea and Garage are up —
@@ -497,17 +498,9 @@ bash scripts/05-reset-apps.sh
 
 ### Secrets (never committed)
 
-Static secrets live in git as `SealedSecret`s, encrypted for **one keypair**: `sealed-secrets-key.yaml` in the repo root of the deploy host (gitignored, like `terraform.tfvars`). `scripts/01-bootstrap-first-master.sh` installs it into `kube-system` *before* Argo CD deploys the sealed-secrets controller, which adopts it instead of generating its own (key renewal is disabled in `argocd/apps/sealed-secrets.yaml`, so it stays the only key). That is what lets a brand-new cluster decrypt the SealedSecrets already in git — a controller-generated key would be different on every cluster and die with it.
+No secret is stored in git, encrypted or otherwise. Argo CD syncs manifests but cannot invent secret material, so secrets come from two places outside it.
 
-```bash
-bash scripts/sealing-key.sh ensure   # create the keypair if missing (deploy.sh does this)
-bash scripts/sealing-key.sh verify   # every committed SealedSecret decrypts with it? (deploy.sh does this)
-bash scripts/06-seal-secrets.sh      # seal the secrets below for it; works with or without a cluster
-```
-
-**Back `sealed-secrets-key.yaml` up off-host** (password manager / vault). Losing it means resealing every secret; leaking it exposes every secret in git. To adopt the key of a cluster that predates this file: `kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealed-secrets-key.yaml`. If the original key is gone, delete the `sealedsecret-*.yaml` files `verify` lists, re-run `06-seal-secrets.sh`, and commit.
-
-`scripts/01-bootstrap-first-master.sh` also creates every one of these secrets with a random value as a fallback, annotated `sealedsecrets.bitnami.com/managed=true` so a committed SealedSecret of the same name overrides it before any consumer starts:
+**Random, generated once per cluster** by `scripts/01-bootstrap-first-master.sh` and never overwritten by a re-run. None of them need to survive a rebuild: the PostgreSQL backup is a role-less `pg_dump --no-owner`, so it restores under the new cluster's credentials, and the rest are cluster-internal or harmless to regenerate:
 
 | Secret                             | Namespace       | Contents                                        |
 | ----------------------------------- | --------------- | ----------------------------------------------- |
@@ -519,9 +512,9 @@ bash scripts/06-seal-secrets.sh      # seal the secrets below for it; works with
 | `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
 | `gitea-api-token`                   | `gitea-runners` | KEDA API token (placeholder; stays one while KEDA autoscaling is pending) |
 
-`gitea-oidc-<slug>` / `gitea-ldap-<slug>` have no fallback — they only come from their SealedSecrets (`06-seal-secrets.sh`, from `terraform.tfvars`). See [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
+**Chosen by you** in `terraform/terraform.tfvars` (gitignored): `gitea_oidc_providers` / `gitea_ldap_providers`. `scripts/06-auth-providers.sh` (run by `deploy.sh`) applies them as `gitea-oidc-<slug>` / `gitea-ldap-<slug>`, deletes those of removed providers, and regenerates the non-secret `apps/gitea/values-oidc.yaml` / `values-ldap.yaml` — commit those when it reports a change. `terraform.tfvars` is the only copy of these credentials (Terraform state holds them too): back it up.
 
-⚠ **Only the OIDC secret is sealed and committed so far** (`apps/gitea/sealedsecret-gitea-oidc-authentik.yaml`). The rest fall back to fresh random values on every rebuild, so off-cluster backups of the *data* (Postgres dumps, Garage objects) would not match a rebuilt cluster's credentials. Run `bash scripts/06-seal-secrets.sh` against the live cluster (with its key in `sealed-secrets-key.yaml`) and commit the output to close this gap.
+See [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 
 Minted automatically once Garage and Gitea are up, by the in-cluster bootstrap Jobs `apps/garage/job-bootstrap.yaml` and `apps/gitea-runner/job-bootstrap-tokens.yaml` — the latter replaces the `gitea-runner-registration` placeholder; the former adds:
 
@@ -564,8 +557,7 @@ Contains all automation scripts for cluster lifecycle management:
 - **02-join-control-plane.sh**: Used to join additional control-plane nodes to the cluster.
 - **03-join-worker.sh**: Used to join worker nodes.
 - **05-reset-apps.sh**: Removes all application workloads from the cluster.
-- **06-seal-secrets.sh**: Seals cluster secrets into git-committable `SealedSecret` manifests.
-- **sealing-key.sh**: Creates/verifies `sealed-secrets-key.yaml`, the keypair every SealedSecret is encrypted for.
+- **06-auth-providers.sh**: Pushes the Gitea OIDC/LDAP credentials from `terraform.tfvars` into the cluster and regenerates their values files.
 - **lib-functions.sh**: Shared Bash functions used by other scripts.
 
 ### argocd/
@@ -574,7 +566,7 @@ The GitOps control layer — the only directory Argo CD needs to be pointed at o
 
 - **install/**: Kustomization pinning the upstream Argo CD release manifest (plus the `argocd-cm` patch that restores the Application health check required for app-of-apps wave ordering). Applied once by `scripts/01-bootstrap-first-master.sh`; afterwards Argo CD manages its own installation from here.
 - **root-app.yaml**: The root Application (app-of-apps). Points at `argocd/apps/` — the single manifest the bootstrap script applies imperatively.
-- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `system-upgrade-controller`, `sealed-secrets` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `garage` (5 — its bootstrap Job mints the S3 credentials Gitea's pod spec references) → `gitea` (6, Helm chart with values from this repo) → `gitea-runner` (7). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
+- **apps/**: One Application per component, ordered by sync waves: `argocd` (0, self-management) → `keda`, `kured`, `system-upgrade-controller` (1) → `traefik`, `cert-manager` (2) → `cert-manager-issuers` (3) → `anubis`, `gitea-config` (4) → `garage` (5 — its bootstrap Job mints the S3 credentials Gitea's pod spec references) → `gitea` (6, Helm chart with values from this repo) → `gitea-runner` (7). The network foundation (`platform/`) is deliberately *not* an Application — it is applied at bootstrap, before Argo CD exists.
 
 ### platform/
 
@@ -640,7 +632,7 @@ Plain YAML (no `kustomization.yaml`): `apps/anubis/` — a pure resource list wi
 ## Tools & Frameworks Used
 
 - **Kubernetes**: Container orchestration and workload management.
-- **Helm**: Traefik, cert-manager, Gitea (+ its `postgresql-ha`/`valkey-cluster` subcharts), and Sealed Secrets — each a multi-source or chart-based Argo CD Application, values from this repo.
+- **Helm**: Traefik, cert-manager, Gitea (+ its `postgresql-ha`/`valkey-cluster` subcharts) — each a multi-source or chart-based Argo CD Application, values from this repo.
 - **Traefik**: Ingress controller and TCP proxy for HTTP(S) and SSH traffic. Its middleware system implements rate limiting, HTTPS redirection, and IP allowlisting (`argocd/install/ip-allowlist.yaml`).
 - **cert-manager**: Automated TLS certificate management with Let's Encrypt.
 - **MetalLB**: L2 load balancer for exposing services with stable IPs.
