@@ -10,10 +10,7 @@ metadata:
     app.kubernetes.io/part-of: gitops
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    # Jobs are immutable — replace instead of patch when this manifest changes.
-    # Force=true: Replace alone is rejected on re-sync because the API server
-    # adds spec.selector to Jobs, which wedges the app. Delete+recreate is
-    # safe since the script is idempotent (as in gitea-runner's token Job).
+    # Replace+Force: see apps/gitea-runner/job-bootstrap-tokens.yaml.
     argocd.argoproj.io/sync-options: Replace=true,Force=true
 spec:
   backoffLimit: 20
