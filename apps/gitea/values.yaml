@@ -233,3 +233,38 @@ gitea:
         secretKeyRef:
           name: gitea-metrics-token
           key: token
+    # Normally generated once into app.ini; from a Secret so app.ini can be
+    # rebuilt on every start (initPreScript below). Secret from scripts/01.
+    - name: GITEA__SECURITY__SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: gitea-app-secrets
+          key: secret-key
+    - name: GITEA__SECURITY__INTERNAL_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: gitea-app-secrets
+          key: internal-token
+    - name: GITEA__OAUTH2__JWT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: gitea-app-secrets
+          key: jwt-secret
+    - name: GITEA__SERVER__LFS_JWT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: gitea-app-secrets
+          key: lfs-jwt-secret
+
+# Rebuild app.ini from values + Secrets on every start. The chart's init only
+# adds and updates keys, so a key removed from gitea.config would otherwise
+# stay in app.ini on the PVC forever. Safe because app.ini holds nothing else:
+# the generated keys come from gitea-app-secrets above, and repos, SSH host
+# keys and the OAuth2 signing key (/data/jwt) are separate files on the PVC.
+# A pod without gitea-app-secrets never gets past init-app-ini, so Gitea can't
+# start with freshly generated keys.
+# Chart <= 12.7.0 renders the inline config as stringData, so a whole section
+# removed from gitea.config stays in the gitea-inline-config Secret; delete
+# that Secret once and Argo CD recreates it (COMMANDS.md).
+initPreScript: |
+  rm -f /data/gitea/conf/app.ini

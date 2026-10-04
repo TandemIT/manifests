@@ -64,8 +64,10 @@ kubectl rollout status deployment/controller -n metallb-system --timeout=180s
 kubectl apply -k "${MANIFESTS_DIR}/platform"
 log "MetalLB + CoreDNS override applied from platform/"
 
-# Created once, never overwritten. None need to survive a rebuild (backups
-# are --no-owner dumps). The runner tokens start as placeholders: the
+# Created once, never overwritten. Only gitea-app-secrets must survive a
+# rebuild: its secret-key decrypts data in the PostgreSQL dumps, so keep an
+# off-cluster copy (COMMANDS.md, Backups). The rest don't (backups are
+# --no-owner dumps). The runner tokens start as placeholders: the
 # runner-token-bootstrap Job replaces the registration token once Gitea is
 # up; gitea-api-token stays one while KEDA autoscaling is pending.
 step_header 5 "Generating bootstrap secrets"
@@ -98,6 +100,14 @@ bootstrap_secret postgresql-ha-pgpool-credentials gitea \
   "admin-password=$(openssl rand -hex 24)" "sr-check-password=$(openssl rand -hex 24)"
 # Bearer token for Gitea's /metrics, which Traefik would otherwise expose.
 bootstrap_secret gitea-metrics-token gitea "token=$(openssl rand -hex 32)"
+# The keys Gitea would otherwise generate once into app.ini, which is
+# rebuilt on every start (apps/gitea/values.yaml initPreScript). Losing
+# secret-key makes Actions secrets, 2FA and webhook secrets unreadable.
+# JWT secrets must be 32 bytes, unpadded base64url.
+jwt_secret() { openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'; }
+bootstrap_secret gitea-app-secrets gitea \
+  "secret-key=$(openssl rand -hex 32)" "internal-token=$(openssl rand -hex 32)" \
+  "jwt-secret=$(jwt_secret)" "lfs-jwt-secret=$(jwt_secret)"
 bootstrap_secret garage-rpc garage "rpc-secret=$(openssl rand -hex 32)"
 bootstrap_secret anubis-key anubis "ED25519_PRIVATE_KEY_HEX=$(openssl rand -hex 32)"
 for secret in gitea-runner-registration gitea-api-token; do

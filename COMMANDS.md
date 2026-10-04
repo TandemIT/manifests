@@ -62,6 +62,17 @@ kubectl rollout restart deployment/gitea -n gitea
 # A provider on a new host also needs that host in [security] ALLOWED_HOST_LIST
 # (apps/gitea/values.yaml, EGRESS_MODE strict), or its avatar fetches are blocked.
 
+# After removing a whole section from gitea.config in apps/gitea/values.yaml:
+# chart <= 12.7.0 never prunes it from the gitea-inline-config Secret, and
+# app.ini is rebuilt from that Secret on every start. Argo CD recreates it from git.
+kubectl delete secret gitea-inline-config -n gitea
+kubectl rollout restart deployment/gitea -n gitea
+
+# gitea-app-secrets: never rotate secret-key, it decrypts Actions secrets, 2FA,
+# webhook secrets and mirror credentials in the DB. internal-token, jwt-secret
+# and lfs-jwt-secret can be replaced plus a restart (the JWT ones invalidate
+# issued LFS and HS256 OAuth2 tokens).
+
 # Rotate the Gitea /metrics bearer token
 kubectl delete secret gitea-metrics-token -n gitea
 kubectl create secret generic gitea-metrics-token -n gitea \
@@ -110,6 +121,21 @@ aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
 
 aws --endpoint-url http://garage.garage.svc.cluster.local:3900 s3 cp \
   s3://platform-backups/gitea-data/gitea-data-<timestamp>.tar.gz - | tar -tzv | head
+```
+
+The dumps are useless without `gitea-app-secrets` (its `secret-key` decrypts
+Actions secrets, 2FA, webhook secrets and mirror credentials). No backup job
+captures it: keep a copy off-cluster, next to `terraform.tfvars`.
+
+```bash
+# Export (plaintext: store it like terraform.tfvars)
+kubectl get secret gitea-app-secrets -n gitea -o go-template=\
+'{{range $k,$v := .data}}{{$k}}={{$v | base64decode}}{{"\n"}}{{end}}' > gitea-app-secrets.env
+
+# After a rebuild: put it back before restoring the PostgreSQL dump
+kubectl delete secret gitea-app-secrets -n gitea
+kubectl create secret generic gitea-app-secrets -n gitea --from-env-file=gitea-app-secrets.env
+kubectl rollout restart deployment/gitea -n gitea
 ```
 
 ## Public NIC (public0)

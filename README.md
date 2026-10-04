@@ -122,3 +122,4 @@ apps/        manifests and Helm values per component
 - Runner autoscaling is waiting on an upstream KEDA Gitea scaler (see `apps/gitea-runner/scaledobject.yaml`).
 - The Argo CD allowlist covers all of RFC1918 until the VPN CIDR is known (`argocd/install/ip-allowlist.yaml`).
 - Terraform state is local, and `terraform/terraform.tfvars` is the only copy of the OIDC/LDAP credentials. Back both up.
+- The `gitea/gitea-app-secrets` Secret is the only copy of the key that decrypts Gitea data in the database backups, and no backup job captures it. Keep a copy off-cluster (COMMANDS.md, Backups).
