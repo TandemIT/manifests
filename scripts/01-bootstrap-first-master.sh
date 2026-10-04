@@ -9,7 +9,8 @@
 #      Deliberately outside Argo CD so the cluster's addresses are in place
 #      and verifiable before GitOps starts, and so MetalLB can be tuned
 #      without self-heal reverting changes.
-#   4. Bootstrap secrets (random material that must never live in git)
+#   4. Bootstrap secrets (random fallbacks; SealedSecrets in git win) and
+#      the sealed-secrets keypair those SealedSecrets are encrypted for
 #   5. Argo CD installation + the root app-of-apps
 # Everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...) is
 # deployed by Argo CD from the argocd/apps/ Applications.
@@ -84,50 +85,68 @@ log "MetalLB + CoreDNS override applied from platform/"
 # wave 0 of the gitea-runner Application) mints the registration token
 # automatically once Argo CD takes over. gitea-api-token stays a placeholder
 # while KEDA autoscaling is PENDING (see apps/gitea-runner/scaledobject.yaml).
-# postgresql-ha-credentials / postgresql-ha-pgpool-credentials are NOT
-# created here — only scripts/06-seal-secrets.sh creates them.
+#
+# Every secret here is a fallback: it is annotated sealedsecrets.bitnami.com/
+# managed=true, so when git holds a SealedSecret of the same name (sealed by
+# scripts/06-seal-secrets.sh) the controller overwrites it with the sealed
+# value at wave 1-4, before any consumer starts. Without the annotation the
+# controller refuses to touch a secret it did not create.
 step_header 6 "Generating bootstrap secrets"
 for ns in gitea gitea-runners anubis garage; do
   ensure_namespace "${ns}"
 done
 
-if ! kubectl get secret gitea-admin -n gitea >/dev/null 2>&1; then
-  kubectl create secret generic gitea-admin -n gitea \
-    --from-literal=username=gitea-admin \
-    --from-literal=password="$(openssl rand -hex 24)" \
-    --from-literal=email=admin@example.com
-  log "Created: gitea/gitea-admin"
-else
-  log "Exists: gitea/gitea-admin"
-fi
-
-if ! kubectl get secret garage-rpc -n garage >/dev/null 2>&1; then
-  kubectl create secret generic garage-rpc -n garage \
-    --from-literal=rpc-secret="$(openssl rand -hex 32)"
-  log "Created: garage/garage-rpc"
-else
-  log "Exists: garage/garage-rpc"
-fi
-
-if ! kubectl get secret anubis-key -n anubis >/dev/null 2>&1; then
-  kubectl create secret generic anubis-key -n anubis \
-    --from-literal=ED25519_PRIVATE_KEY_HEX="$(openssl rand -hex 32)"
-  log "Created: anubis/anubis-key"
-else
-  log "Exists: anubis/anubis-key"
-fi
-
-for secret in gitea-runner-registration gitea-api-token; do
-  if ! kubectl get secret "${secret}" -n gitea-runners >/dev/null 2>&1; then
-    kubectl create secret generic "${secret}" -n gitea-runners \
-      --from-literal=token=placeholder-update-after-gitea-is-up
-    log "Created: gitea-runners/${secret} (placeholder)"
-  else
-    log "Exists: gitea-runners/${secret}"
+# bootstrap_secret <name> <namespace> key=value...
+bootstrap_secret() {
+  local name="$1" ns="$2" kv args=()
+  shift 2
+  if kubectl get secret "${name}" -n "${ns}" >/dev/null 2>&1; then
+    log "Exists: ${ns}/${name}"
+    return 0
   fi
+  for kv in "$@"; do
+    args+=(--from-literal="${kv}")
+  done
+  kubectl create secret generic "${name}" -n "${ns}" "${args[@]}" >/dev/null
+  kubectl annotate secret "${name}" -n "${ns}" sealedsecrets.bitnami.com/managed=true >/dev/null
+  log "Created: ${ns}/${name}"
+}
+
+bootstrap_secret gitea-admin gitea \
+  username=gitea-admin "password=$(openssl rand -hex 24)" email=admin@example.com
+# Key names are what the postgresql-ha chart's existingSecret expects
+# (apps/gitea/values.yaml).
+bootstrap_secret postgresql-ha-credentials gitea \
+  "postgres-password=$(openssl rand -hex 24)" "password=$(openssl rand -hex 24)" \
+  "repmgr-password=$(openssl rand -hex 24)"
+bootstrap_secret postgresql-ha-pgpool-credentials gitea \
+  "admin-password=$(openssl rand -hex 24)" "sr-check-password=$(openssl rand -hex 24)"
+bootstrap_secret garage-rpc garage "rpc-secret=$(openssl rand -hex 32)"
+bootstrap_secret anubis-key anubis "ED25519_PRIVATE_KEY_HEX=$(openssl rand -hex 32)"
+for secret in gitea-runner-registration gitea-api-token; do
+  bootstrap_secret "${secret}" gitea-runners token=placeholder-update-after-gitea-is-up
 done
 
-step_header 7 "Installing Argo CD"
+# The SealedSecrets in git are encrypted for one specific keypair. Installed
+# before Argo CD so the sealed-secrets controller (wave 1) adopts it instead
+# of generating a fresh key that cannot decrypt anything already committed.
+# deploy.sh stages it from the deploy host (see scripts/sealing-key.sh); for
+# a manual bootstrap, copy sealed-secrets-key.yaml into the repo root first.
+step_header 7 "Installing sealed-secrets key"
+SEALED_SECRETS_KEY="${SEALED_SECRETS_KEY:-${MANIFESTS_DIR}/sealed-secrets-key.yaml}"
+if [[ -f "${SEALED_SECRETS_KEY}" ]]; then
+  kubectl apply -n kube-system -f "${SEALED_SECRETS_KEY}" >/dev/null
+  log "Installed sealing key from ${SEALED_SECRETS_KEY}"
+elif [[ -n "$(kubectl get secret -n kube-system \
+    -l sealedsecrets.bitnami.com/sealed-secrets-key=active -o name)" ]]; then
+  log "Sealing key already present in kube-system"
+else
+  warn "No sealing key at ${SEALED_SECRETS_KEY} — the controller will generate"
+  warn "its own, and the SealedSecrets committed in git will NOT decrypt."
+  warn "See scripts/sealing-key.sh."
+fi
+
+step_header 8 "Installing Argo CD"
 # --server-side: the applicationsets.argoproj.io CRD's schema exceeds the
 # 262144-byte cap kubectl's client-side apply enforces on the
 # last-applied-configuration annotation.
@@ -153,7 +172,7 @@ kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
 kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=300s
 kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
 
-step_header 8 "Applying root app-of-apps"
+step_header 9 "Applying root app-of-apps"
 kubectl apply -f "${MANIFESTS_DIR}/argocd/root-app.yaml"
 log "Argo CD now reconciles the cluster from git (argocd/apps/)"
 

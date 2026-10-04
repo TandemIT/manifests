@@ -439,13 +439,16 @@ Supported job labels: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`
 Provisions the VMs on Proxmox and runs the entire bootstrap end-to-end from a deploy host, with no interactive steps:
 
 ```bash
-./setup.sh     # one-time: prereq check (installs OpenTofu if needed), creates terraform/terraform.tfvars
+./setup.sh     # one-time: prereq check (installs OpenTofu + kubeseal if needed), creates terraform/terraform.tfvars
+# restore sealed-secrets-key.yaml to the repo root if git already holds SealedSecrets (see Secrets below)
 # edit terraform/terraform.tfvars (Proxmox API token, template, network)
 git push       # nodes and Argo CD pull the manifests from git
 ./deploy.sh    # tofu/terraform → VMs → Ansible → scripts/01..03 → Argo CD converges
 ```
 
 `deploy.sh` is fully non-interactive and safe to re-run. It auto-detects the IaC binary (OpenTofu preferred, Terraform as fallback; override with `TF_BIN=`). The apply also generates `ansible/inventory.yml` from the same variables that created the VMs, so node IPs, the VIP, and the K3s version have a single source of truth (`terraform/terraform.tfvars`). The Ansible playbook does not reimplement any installation logic — it runs this repo's `scripts/01..03` on the right nodes, so the manual and automated paths cannot drift.
+
+Before provisioning anything, `deploy.sh` creates `sealed-secrets-key.yaml` if it is missing and aborts if any committed SealedSecret does not decrypt with it, so a key mismatch fails in seconds instead of as a stuck Gitea twenty minutes later.
 
 Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-guest-agent preinstalled** (Terraform waits for the agent), and the DNS records `git.open-ict.hu` and `argo.git.open-ict.hu` → `145.89.192.138`.
 
@@ -466,6 +469,7 @@ Requirements: a Proxmox API token, an Ubuntu cloud-image template **with qemu-gu
 #    foundation (MetalLB, CoreDNS) + bootstrap secrets + Argo CD + root
 #    app-of-apps. From this point Argo CD deploys the application stack
 #    from git; the network layer is already up and verifiable.
+#    Copy sealed-secrets-key.yaml into the repo root first (see Secrets).
 sudo bash scripts/01-bootstrap-first-master.sh
 
 # 2. Join the remaining control-plane nodes (run on master2, master3)
@@ -493,21 +497,31 @@ bash scripts/05-reset-apps.sh
 
 ### Secrets (never committed)
 
-Generated once (Argo CD syncs manifests but cannot invent secret material) — by `scripts/01-bootstrap-first-master.sh` unless noted:
+Static secrets live in git as `SealedSecret`s, encrypted for **one keypair**: `sealed-secrets-key.yaml` in the repo root of the deploy host (gitignored, like `terraform.tfvars`). `scripts/01-bootstrap-first-master.sh` installs it into `kube-system` *before* Argo CD deploys the sealed-secrets controller, which adopts it instead of generating its own (key renewal is disabled in `argocd/apps/sealed-secrets.yaml`, so it stays the only key). That is what lets a brand-new cluster decrypt the SealedSecrets already in git — a controller-generated key would be different on every cluster and die with it.
+
+```bash
+bash scripts/sealing-key.sh ensure   # create the keypair if missing (deploy.sh does this)
+bash scripts/sealing-key.sh verify   # every committed SealedSecret decrypts with it? (deploy.sh does this)
+bash scripts/06-seal-secrets.sh      # seal the secrets below for it; works with or without a cluster
+```
+
+**Back `sealed-secrets-key.yaml` up off-host** (password manager / vault). Losing it means resealing every secret; leaking it exposes every secret in git. To adopt the key of a cluster that predates this file: `kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealed-secrets-key.yaml`. If the original key is gone, delete the `sealedsecret-*.yaml` files `verify` lists, re-run `06-seal-secrets.sh`, and commit.
+
+`scripts/01-bootstrap-first-master.sh` also creates every one of these secrets with a random value as a fallback, annotated `sealedsecrets.bitnami.com/managed=true` so a committed SealedSecret of the same name overrides it before any consumer starts:
 
 | Secret                             | Namespace       | Contents                                        |
 | ----------------------------------- | --------------- | ----------------------------------------------- |
 | `gitea-admin`                       | `gitea`         | Gitea admin username + password                 |
-| `postgresql-ha-credentials`         | `gitea`         | PostgreSQL superuser, app-DB user, repmgr passwords — **only** created by `scripts/06-seal-secrets.sh` |
-| `postgresql-ha-pgpool-credentials`  | `gitea`         | pgpool admin + health-check passwords — **only** created by `scripts/06-seal-secrets.sh` |
+| `postgresql-ha-credentials`         | `gitea`         | PostgreSQL superuser, app-DB user, repmgr passwords |
+| `postgresql-ha-pgpool-credentials`  | `gitea`         | pgpool admin + health-check passwords           |
 | `garage-rpc`                        | `garage`        | Garage cluster RPC secret                       |
 | `anubis-key`                        | `anubis`        | Anubis ED25519 signing key                      |
 | `gitea-runner-registration`         | `gitea-runners` | Act Runner registration token (placeholder)     |
 | `gitea-api-token`                   | `gitea-runners` | KEDA API token (placeholder; stays one while KEDA autoscaling is pending) |
 
-Each of these can be captured into git as a `SealedSecret` by `scripts/06-seal-secrets.sh` (same mechanism as `gitea-admin`) — see [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
+`gitea-oidc-<slug>` / `gitea-ldap-<slug>` have no fallback — they only come from their SealedSecrets (`06-seal-secrets.sh`, from `terraform.tfvars`). See [PostgreSQL HA over a Single Instance](#postgresql-ha-over-a-single-instance) for what replaced the chart's own published default passwords.
 
-⚠ **Currently only the OIDC secret has been sealed and committed** (`apps/gitea/sealedsecret-gitea-oidc-authentik.yaml`) — `sealedsecret-gitea-admin.yaml`, `sealedsecret-postgresql-ha.yaml`, `sealedsecret-postgresql-ha-pgpool.yaml`, `apps/garage/sealedsecret-garage-rpc.yaml`, and `apps/anubis/sealedsecret-anubis-key.yaml` do not exist in this repo. Until `scripts/06-seal-secrets.sh` is run against the live cluster and its output committed, rebuilding the cluster from git alone does **not** restore the original admin password, database passwords, Garage RPC secret, or Anubis signing key — it falls back to `scripts/01-bootstrap-first-master.sh` minting brand-new random values for the secrets it creates (the two PostgreSQL secrets are not created at all until `06-seal-secrets.sh` runs), which is a real disaster-recovery gap: any off-cluster backup of the *data* (Postgres dumps, Garage objects) would need credentials that no longer match a freshly-bootstrapped cluster. Run `bash scripts/06-seal-secrets.sh` against the live cluster and commit its output to close this gap.
+⚠ **Only the OIDC secret is sealed and committed so far** (`apps/gitea/sealedsecret-gitea-oidc-authentik.yaml`). The rest fall back to fresh random values on every rebuild, so off-cluster backups of the *data* (Postgres dumps, Garage objects) would not match a rebuilt cluster's credentials. Run `bash scripts/06-seal-secrets.sh` against the live cluster (with its key in `sealed-secrets-key.yaml`) and commit the output to close this gap.
 
 Minted automatically once Garage and Gitea are up, by the in-cluster bootstrap Jobs `apps/garage/job-bootstrap.yaml` and `apps/gitea-runner/job-bootstrap-tokens.yaml` — the latter replaces the `gitea-runner-registration` placeholder; the former adds:
 
@@ -551,6 +565,7 @@ Contains all automation scripts for cluster lifecycle management:
 - **03-join-worker.sh**: Used to join worker nodes.
 - **05-reset-apps.sh**: Removes all application workloads from the cluster.
 - **06-seal-secrets.sh**: Seals cluster secrets into git-committable `SealedSecret` manifests.
+- **sealing-key.sh**: Creates/verifies `sealed-secrets-key.yaml`, the keypair every SealedSecret is encrypted for.
 - **lib-functions.sh**: Shared Bash functions used by other scripts.
 
 ### argocd/

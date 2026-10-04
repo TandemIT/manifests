@@ -51,6 +51,27 @@ else
     sudo apt update && sudo apt install -y jq
 fi
 
+# kubeseal: deploy.sh checks the committed SealedSecrets against
+# sealed-secrets-key.yaml with it; scripts/06-seal-secrets.sh seals with it.
+KUBESEAL_VERSION="${KUBESEAL_VERSION:-0.31.0}"
+if command -v kubeseal &> /dev/null; then
+    echo -e "${GREEN}[ok] kubeseal: $(kubeseal --version)${NC}"
+else
+    echo -e "${YELLOW}[--] kubeseal not found. Installing v${KUBESEAL_VERSION}...${NC}"
+    curl -fsSL "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz" \
+        | tar -xz -C /tmp kubeseal
+    sudo install -m 755 /tmp/kubeseal /usr/local/bin/kubeseal
+    rm -f /tmp/kubeseal
+    echo -e "${GREEN}[ok] kubeseal: $(kubeseal --version)${NC}"
+fi
+
+if [ -f "sealed-secrets-key.yaml" ]; then
+    echo -e "${GREEN}[ok] sealed-secrets-key.yaml present${NC}"
+else
+    echo -e "${YELLOW}[--] No sealed-secrets-key.yaml - deploy.sh generates one. If git already${NC}"
+    echo -e "${YELLOW}     holds SealedSecrets, restore the key they were sealed for instead.${NC}"
+fi
+
 if [ -f "$HOME/.ssh/id_ed25519.pub" ]; then
     echo -e "${GREEN}[ok] SSH key: $(cat "$HOME/.ssh/id_ed25519.pub")${NC}"
     echo "     Make sure ssh_public_key in terraform/terraform.tfvars matches."

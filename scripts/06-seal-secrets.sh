@@ -5,12 +5,16 @@
 # files that Argo CD syncs like any other manifest. For each secret it:
 #   1. reuses the live in-cluster value when one exists (sealing never
 #      rotates credentials), otherwise generates or prompts for a value.
-#      postgresql-ha-credentials / postgresql-ha-pgpool-credentials are
-#      not created by scripts/01 — this script is their only source.
 #   2. writes the SealedSecret next to the app that consumes it
 #   3. adds the file to that app's kustomization.yaml (apps/anubis has none;
 #      its directory source picks the file up as-is)
 #   4. annotates the live secret so the controller is allowed to adopt it
+#
+# Seals for the keypair in sealed-secrets-key.yaml (scripts/sealing-key.sh)
+# — the one scripts/01 installs on every new cluster — so the output
+# decrypts on any rebuild. Works without a cluster: values are then freshly
+# generated, which is how a brand-new cluster gets its secrets into git
+# before it exists.
 #
 # Sealed files (commit all of them):
 #   apps/gitea/sealedsecret-gitea-admin.yaml
@@ -26,9 +30,8 @@
 # are NOT sealed — they are minted in-cluster by the bootstrap Jobs in
 # apps/gitea-runner/ and apps/garage/.
 #
-# Requirements: kubectl (with cluster access), kubeseal, openssl.
-# The sealed-secrets controller (argocd/apps/sealed-secrets.yaml) must be
-# running — kubeseal fetches its public certificate on first use.
+# Requirements: kubectl, kubeseal, openssl, python3. Cluster access is
+# optional (live values + adoption annotations are skipped without it).
 #
 # Idempotent: existing sealedsecret-*.yaml files are left untouched. To
 # rotate a secret, delete its file and re-run this script.
@@ -40,9 +43,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib-functions.sh"
 
 MANIFESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CERT="${MANIFESTS_DIR}/sealed-secrets-cert.pem"
+KEY_FILE="${SEALED_SECRETS_KEY:-${MANIFESTS_DIR}/sealed-secrets-key.yaml}"
 CONTROLLER_NAME="sealed-secrets-controller"
 CONTROLLER_NS="kube-system"
+CERT="$(mktemp)"
+trap 'rm -f "${CERT}"' EXIT
 
 if [[ -z "${KUBECONFIG:-}" ]]; then
   if [[ -f /etc/rancher/k3s/k3s.yaml ]]; then
@@ -53,11 +58,17 @@ if [[ -z "${KUBECONFIG:-}" ]]; then
 fi
 
 require_binary kubectl kubeseal openssl python3
-require_cluster
+CLUSTER=false
+if kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+  CLUSTER=true
+else
+  warn "No cluster reachable — sealing freshly generated values only"
+fi
 
 # Read a key from a live in-cluster secret; empty output when absent.
 live_value() {
   local name="$1" ns="$2" key="$3"
+  [[ "${CLUSTER}" == "true" && -n "${name}" ]] || return 0
   kubectl get secret "${name}" -n "${ns}" -o jsonpath="{.data.${key}}" 2>/dev/null \
     | base64 -d 2>/dev/null || true
 }
@@ -66,6 +77,7 @@ live_value() {
 # Without this annotation it refuses to overwrite secrets it did not create.
 mark_managed() {
   local name="$1" ns="$2"
+  [[ "${CLUSTER}" == "true" ]] || return 0
   if kubectl get secret "${name}" -n "${ns}" >/dev/null 2>&1; then
     kubectl annotate secret "${name}" -n "${ns}" \
       sealedsecrets.bitnami.com/managed=true --overwrite >/dev/null
@@ -83,7 +95,8 @@ seal_secret() {
   done
   kubectl create secret generic "${name}" -n "${ns}" "${args[@]}" \
     --dry-run=client -o yaml \
-    | kubeseal --cert "${CERT}" --format yaml > "${outfile}"
+    | kubeseal --cert "${CERT}" --format yaml -n "${ns}" > "${outfile}" \
+    || { rm -f "${outfile}"; die "Sealing ${ns}/${name} failed"; }
   mark_managed "${name}" "${ns}"
   log "Sealed: ${ns}/${name} -> ${outfile#"${MANIFESTS_DIR}"/}"
 }
@@ -97,17 +110,26 @@ add_resource() {
   fi
 }
 
-# The cert is a public key — safe to commit, so future sealing works offline
-# from any checkout.
-step_header 1 "Fetching sealed-secrets public certificate"
-if [[ ! -f "${CERT}" ]]; then
-  kubeseal --fetch-cert \
-    --controller-name "${CONTROLLER_NAME}" \
-    --controller-namespace "${CONTROLLER_NS}" > "${CERT}" \
-    || die "Cannot fetch certificate — is the sealed-secrets Application synced yet?"
-  log "Saved: ${CERT#"${MANIFESTS_DIR}"/} (public key, commit it)"
+# Seal for the deploy host's keypair, never for whatever the live controller
+# happens to hold: a controller-generated key is lost with the cluster.
+step_header 1 "Loading sealed-secrets certificate"
+if [[ -f "${KEY_FILE}" ]]; then
+  SEALED_SECRETS_KEY="${KEY_FILE}" bash "${SCRIPT_DIR}/sealing-key.sh" cert "${CERT}"
+  log "Sealing for: ${KEY_FILE}"
+  if [[ "${CLUSTER}" == "true" ]]; then
+    LIVE_CERT="$(kubeseal --fetch-cert --controller-name "${CONTROLLER_NAME}" \
+      --controller-namespace "${CONTROLLER_NS}" 2>/dev/null || true)"
+    if [[ -n "${LIVE_CERT}" ]] && ! echo "${LIVE_CERT}" \
+        | SEALED_SECRETS_KEY="${KEY_FILE}" bash "${SCRIPT_DIR}/sealing-key.sh" has-cert; then
+      die "The cluster's sealing key is not in ${KEY_FILE} — export it first:
+  kubectl get secret -n ${CONTROLLER_NS} -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > ${KEY_FILE}"
+    fi
+  fi
+elif [[ "${CLUSTER}" == "true" ]]; then
+  die "No ${KEY_FILE}. Export the cluster's key so rebuilds can decrypt what this seals:
+  kubectl get secret -n ${CONTROLLER_NS} -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > ${KEY_FILE}"
 else
-  log "Using cached certificate: ${CERT#"${MANIFESTS_DIR}"/}"
+  die "No ${KEY_FILE} and no cluster — create one: bash scripts/sealing-key.sh ensure"
 fi
 
 step_header 2 "Sealing gitea/gitea-admin"
@@ -150,7 +172,11 @@ else
   # Reuses the live values if the chart's own secret already exists (it does
   # on any cluster deployed before this SealedSecret was wired in) so this
   # never silently rotates a running PostgreSQL cluster's passwords.
-  PG_SECRET="$(kubectl get secret -n gitea -l app.kubernetes.io/component=postgresql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  # postgresql-ha-credentials itself is created by scripts/01; the label
+  # lookup covers clusters bootstrapped before that.
+  PG_SECRET=postgresql-ha-credentials
+  [[ -n "$(live_value "${PG_SECRET}" gitea password)" ]] \
+    || PG_SECRET="$(kubectl get secret -n gitea -l app.kubernetes.io/component=postgresql -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   POSTGRES_PASS="$(live_value "${PG_SECRET}" gitea postgres-password)"
   APP_PASS="$(live_value "${PG_SECRET}" gitea password)"
   REPMGR_PASS="$(live_value "${PG_SECRET}" gitea repmgr-password)"
@@ -164,7 +190,9 @@ fi
 if [[ -f "${OUT_PGPOOL}" ]]; then
   log "Exists: ${OUT_PGPOOL#"${MANIFESTS_DIR}"/} (delete the file to rotate)"
 else
-  PGPOOL_SECRET="$(kubectl get secret -n gitea -l app.kubernetes.io/component=pgpool -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  PGPOOL_SECRET=postgresql-ha-pgpool-credentials
+  [[ -n "$(live_value "${PGPOOL_SECRET}" gitea admin-password)" ]] \
+    || PGPOOL_SECRET="$(kubectl get secret -n gitea -l app.kubernetes.io/component=pgpool -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   ADMIN_PASS="$(live_value "${PGPOOL_SECRET}" gitea admin-password)"
   SRCHECK_PASS="$(live_value "${PGPOOL_SECRET}" gitea sr-check-password)"
   [[ -n "${ADMIN_PASS}" ]] || ADMIN_PASS="$(openssl rand -hex 24)"
@@ -363,15 +391,21 @@ print('\n'.join(lines))
 LDAP_COUNT="$(LDAP_JSON="${LDAP_JSON}" python3 -c "import json,os; print(len(json.loads(os.environ['LDAP_JSON'])))")"
 log "Generated: apps/gitea/values-ldap.yaml (${LDAP_COUNT} provider(s))"
 
+# A sealed file deleted to reseal it (sealing-key.sh verify's advice) and not
+# re-created this run would leave a dangling entry that breaks kustomize.
+for KFILE in "${MANIFESTS_DIR}"/apps/*/kustomization.yaml; do
+  while read -r ENTRY; do
+    [[ -f "$(dirname "${KFILE}")/${ENTRY}" ]] && continue
+    sed -i "/^[[:space:]]*-[[:space:]]*${ENTRY//./\\.}[[:space:]]*$/d" "${KFILE}"
+    log "Unwired: ${ENTRY} from ${KFILE#"${MANIFESTS_DIR}"/} (file no longer exists)"
+  done < <(sed -n 's/^[[:space:]]*-[[:space:]]*\(sealedsecret-[^[:space:]]*\.yaml\)[[:space:]]*$/\1/p' "${KFILE}")
+done
+
 section_header "Sealing complete"
 echo ""
 echo "Next steps:"
 echo "  1. git add -A && git commit && git push — Argo CD takes ownership on sync."
 echo ""
-echo "IMPORTANT — back up the sealing keypair off-cluster (without it, a cluster"
-echo "rebuild makes every SealedSecret in git undecryptable):"
-echo "  kubectl get secret -n kube-system \\"
-echo "    -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealing-key-backup.yaml"
-echo "Restore on a fresh cluster with: kubectl apply -f sealing-key-backup.yaml"
-echo "(then restart the sealed-secrets-controller deployment)."
+echo "IMPORTANT — ${KEY_FILE#"${MANIFESTS_DIR}"/} is the only key that decrypts these"
+echo "files. Keep an off-host backup; deploy.sh installs it on every new cluster."
 echo "================================================================================"

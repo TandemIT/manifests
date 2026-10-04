@@ -35,15 +35,33 @@
   hosts: "{{ groups['control_plane'][0] }}"
   become: true
   tasks:
-    # Idempotent - safe to re-run on a partially bootstrapped node.
-    - name: Run 01-bootstrap-first-master.sh
-      ansible.builtin.command:
-        cmd: bash /opt/manifests/scripts/01-bootstrap-first-master.sh
-      environment:
-        VIP: '{{ k3s_vip }}'
-        K3S_VERSION: '{{ k3s_version }}'
-      register: bootstrap_result
-      changed_when: true
+    # The keypair the SealedSecrets in git are encrypted for (gitignored on
+    # the deploy host, created/checked by deploy.sh via scripts/sealing-key.sh).
+    # 01 installs it before Argo CD so the controller adopts it; the copy on
+    # the node is removed again afterwards.
+    - name: Bootstrap with the sealed-secrets key staged
+      block:
+        - name: Stage sealed-secrets key
+          ansible.builtin.copy:
+            src: '{{ playbook_dir }}/../sealed-secrets-key.yaml'
+            dest: /root/sealed-secrets-key.yaml
+            mode: '0600'
+
+        # Idempotent - safe to re-run on a partially bootstrapped node.
+        - name: Run 01-bootstrap-first-master.sh
+          ansible.builtin.command:
+            cmd: bash /opt/manifests/scripts/01-bootstrap-first-master.sh
+          environment:
+            VIP: '{{ k3s_vip }}'
+            K3S_VERSION: '{{ k3s_version }}'
+            SEALED_SECRETS_KEY: /root/sealed-secrets-key.yaml
+          register: bootstrap_result
+          changed_when: true
+      always:
+        - name: Remove staged sealed-secrets key
+          ansible.builtin.file:
+            path: /root/sealed-secrets-key.yaml
+            state: absent
 
     - name: Show bootstrap summary
       ansible.builtin.debug:

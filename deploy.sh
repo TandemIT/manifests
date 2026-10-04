@@ -4,7 +4,9 @@
 #
 # Prerequisites: terraform/terraform.tfvars filled in (see setup.sh), local
 # commits PUSHED to the manifests repo (nodes and Argo CD pull from git),
-# and the VM template with qemu-guest-agent preinstalled.
+# the VM template with qemu-guest-agent preinstalled, and - when git already
+# holds SealedSecrets - the sealed-secrets-key.yaml they were sealed for
+# (generated here on first run; see scripts/sealing-key.sh).
 #
 # Fully non-interactive. Re-running is safe: the infra is declarative and
 # the bootstrap scripts are idempotent.
@@ -48,6 +50,17 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     echo -e "${YELLOW}Warning: uncommitted changes in this repo. Nodes and Argo CD${NC}"
     echo -e "${YELLOW}pull from the git remote - unpushed changes will NOT be deployed.${NC}"
 fi
+
+# The SealedSecrets in git only decrypt with the keypair they were sealed
+# for. Checked before anything is provisioned: a mismatch would otherwise
+# surface 20 minutes later as Gitea stuck on a secret that never appears.
+step "Step 0: Checking the sealed-secrets key"
+if ! command -v kubeseal &> /dev/null; then
+    echo -e "${RED}Error: kubeseal not found. Run ./setup.sh first.${NC}"
+    exit 1
+fi
+bash scripts/sealing-key.sh ensure
+bash scripts/sealing-key.sh verify
 
 step "Step 1: Provisioning VMs (also generates ansible/inventory.yml)"
 "${TF_BIN}" -chdir=terraform init -input=false

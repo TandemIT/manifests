@@ -95,8 +95,9 @@ postgresql-ha:
   # passwords (postgresql.postgresPassword/password/repmgrPassword,
   # pgpool.adminPassword/srCheckPassword) — existingSecret bypasses them
   # entirely rather than overriding them with different literals in git.
-  # Both secrets are created only by scripts/06-seal-secrets.sh (not by
-  # scripts/01-bootstrap-first-master.sh, unlike gitea-admin).
+  # Both secrets start as random fallbacks from
+  # scripts/01-bootstrap-first-master.sh; a SealedSecret from
+  # scripts/06-seal-secrets.sh, once committed, overrides them.
   global:
     postgresql:
       existingSecret: postgresql-ha-credentials

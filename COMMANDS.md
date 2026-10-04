@@ -35,7 +35,9 @@ MetalLB manages LoadBalancer services (L2 mode):
 - All nodes can reach each other.
 - This repository is cloned to the same path on every node (e.g. `/opt/manifests`).
 - Nodes run a supported Linux distro (Ubuntu 24.04 / Debian 12 recommended).
-- `curl`, `python3` available on the deploy host (`kubeseal`, `openssl` too if you run `scripts/06-seal-secrets.sh`).
+- `curl`, `python3`, `openssl` and `kubeseal` available on the deploy host (`./setup.sh` installs kubeseal).
+- `sealed-secrets-key.yaml` in the repo root — the keypair the SealedSecrets in
+  git are encrypted for (see [Secrets](#secrets-day-2)). Never committed.
 - Override `VIP` / `K3S_VERSION` via environment variables if needed; the
   kube-vip network interface is auto-detected from the default route
   (override with `VIP_INTERFACE`).
@@ -56,14 +58,17 @@ automated:
 `deploy.sh` provisions the VMs, generates `ansible/inventory.yml` from the
 Terraform variables, runs `scripts/01..03` on the right nodes via Ansible,
 fetches a kubeconfig (pointed at the VIP) to the repo root, and waits for the
-Argo CD applications to converge. Steps 1–4 below are the manual equivalent.
+Argo CD applications to converge. Before provisioning anything it creates
+`sealed-secrets-key.yaml` if missing and aborts if any committed SealedSecret
+does not decrypt with it. Steps 1–4 below are the manual equivalent.
 
 ---
 
 ## Step 1 — Bootstrap master1
 
 ```bash
-# On master1, as root:
+# On master1, as root — first copy sealed-secrets-key.yaml from the deploy
+# host into the repo root (or point SEALED_SECRETS_KEY at it):
 sudo bash install.sh
 ```
 
@@ -72,7 +77,7 @@ This script:
 1. Copies the kube-vip static pod to `/var/lib/rancher/k3s/agent/pod-manifests/`
 2. Installs K3s with `--cluster-init`
 3. Applies the network foundation from `platform/` (MetalLB + IP pool, CoreDNS override) — directly via `kubectl apply -k`, outside Argo CD
-4. Generates the bootstrap secrets
+4. Generates the bootstrap secrets (random fallbacks; committed SealedSecrets override them) and installs the sealed-secrets keypair
 5. Installs Argo CD and applies the root app-of-apps — from here Argo CD deploys everything else (KEDA, kured, Traefik, cert-manager, Gitea, ...)
 6. Prints the join token and commands for the remaining nodes
 
@@ -205,10 +210,25 @@ commit and push.
 
 ## Secrets (Day-2)
 
-Static secrets live in git as SealedSecrets (encrypted with the cluster's
-sealed-secrets key, synced by Argo CD). `scripts/06-seal-secrets.sh` seals
-them all on first run; to **rotate** one, delete its `sealedsecret-*.yaml`
-file and re-run the script, or reseal by hand:
+Static secrets live in git as SealedSecrets, encrypted for the keypair in
+`sealed-secrets-key.yaml` (repo root on the deploy host, gitignored). That
+key — not one the controller invents — is installed on every new cluster by
+`scripts/01`, so a rebuild decrypts what is already in git. **Keep an
+off-host backup of it**: losing it means resealing everything, leaking it
+exposes everything.
+
+```bash
+bash scripts/sealing-key.sh ensure   # create the keypair if missing
+bash scripts/sealing-key.sh verify   # every committed SealedSecret decrypts with it?
+
+# Adopt the key of an existing cluster (it predates sealed-secrets-key.yaml):
+kubectl get secret -n kube-system \
+  -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealed-secrets-key.yaml
+```
+
+`scripts/06-seal-secrets.sh` seals them all on first run (with or without a
+cluster); to **rotate** one, delete its `sealedsecret-*.yaml` file and re-run
+the script, or reseal by hand:
 
 ```bash
 # Update the Gitea OIDC provider credentials (one secret per provider slug,
@@ -218,7 +238,7 @@ kubectl create secret generic gitea-oidc-authentik \
   --from-literal=key="<CLIENT_ID>" \
   --from-literal=secret="<CLIENT_SECRET>" \
   --dry-run=client -o yaml \
-  | kubeseal --cert sealed-secrets-cert.pem --format yaml \
+  | kubeseal --cert <(bash scripts/sealing-key.sh cert /dev/stdout) --format yaml -n gitea \
   > apps/gitea/sealedsecret-gitea-oidc-authentik.yaml
 # then: git commit + push — Argo CD applies it on sync.
 
@@ -237,14 +257,6 @@ garage). To re-mint, delete the secret and the Job, then let Argo CD sync:
 ```bash
 kubectl delete secret gitea-runner-registration -n gitea-runners
 kubectl delete job runner-token-bootstrap -n gitea-runners
-```
-
-**Back up the sealing key** (store off-cluster; restore it before the
-sealed-secrets app syncs on a rebuilt cluster):
-
-```bash
-kubectl get secret -n kube-system \
-  -l sealedsecrets.bitnami.com/sealed-secrets-key -o yaml > sealing-key-backup.yaml
 ```
 
 ---
