@@ -1,12 +1,14 @@
 # # Runs deploy.sh (OpenTofu -> Ansible -> Argo CD) from the Cloud-Infra mirror
 # # of this repo on every push to master: a pull-mirror sync fires the same
 # # push event. Runs on the infra runner (apps/gitea-runner-infra/, label
-# # "infra"), whose egress is controlled at the site firewall.
+# # "infra"), whose egress is controlled at the site firewall. The toolchain is
+# # the job image (images/deploy/), so this file installs nothing.
 # #
 # # Setup in the Cloud-Infra repo (Settings -> Actions):
 # #   Secrets:   VM_PASSWORD       TF_VAR_vm_password
 # #              STATE_PASSPHRASE  TF_VAR_state_passphrase (terraform/main.tf)
-# #              STATE_TOKEN       token with write:package for the state backend
+# #              STATE_TOKEN       token with write:package: the state backend,
+# #                                and the job image (deploy-image.yml)
 # #              PROXMOX_API_TOKEN_ID      TF_VAR_proxmox_api_token_id
 # #              PROXMOX_API_TOKEN_SECRET  TF_VAR_proxmox_api_token_secret
 # #              GITEA_OIDC_PROVIDERS      TF_VAR_gitea_oidc_providers (HCL map, {} = none)
@@ -40,38 +42,23 @@
 #     runs-on: infra
 #     timeout-minutes: 90
 #     # Pinned by digest: this job holds the Proxmox token, the state
-#     # passphrase and (via Ansible) cluster-admin.
+#     # passphrase and (via Ansible) cluster-admin. deploy-image.yml prints the
+#     # digest after a rebuild.
 #     container:
-#       image: debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+#       image: git.open-ict.hu/cloud-infra/deploy@sha256:REPLACE_WITH_DIGEST_FROM_DEPLOY_IMAGE_YML
+#       credentials:
+#         username: ${{ vars.STATE_USER }}
+#         password: ${{ secrets.STATE_TOKEN }}
 #     env:
 #       CI: "true"
-#       # In-cluster Gitea: skips Traefik/Anubis; the runner's NetworkPolicy
-#       # allows gitea:3000 (and not the public address).
+#       # In-cluster Gitea for git and the state backend: the public address
+#       # would route this pod's traffic through Anubis and the rate limit
+#       # (apps/anubis/ingressroute.yaml bypasses node IPs, not pod IPs).
 #       GITEA_INTERNAL: http://gitea-http.gitea.svc.cluster.local:3000
-#       # Pins: keep in sync with .claude/skills/validate/validate.sh (tofu)
-#       # and the K3s version (kubectl within one minor). README, Components.
-#       TOFU_VERSION: 1.13.1
-#       KUBECTL_VERSION: v1.32.3
 #     steps:
-#       # No actions/checkout: it clones via the public ROOT_URL, which the
-#       # runner can't reach, and would run third-party code next to the
-#       # secrets. The job token is accepted as a basic-auth password.
-#       - name: Install tools
-#         run: |
-#           apt-get update -qq
-#           apt-get install -y -qq --no-install-recommends \
-#             ca-certificates curl git ansible jq openssh-client python3 >/dev/null
-#           tofu_url="https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}"
-#           cd /tmp
-#           curl -fsSLO "${tofu_url}/tofu_${TOFU_VERSION}_amd64.deb"
-#           curl -fsSL "${tofu_url}/tofu_${TOFU_VERSION}_SHA256SUMS" | grep " tofu_${TOFU_VERSION}_amd64.deb$" | sha256sum -c -
-#           dpkg -i "tofu_${TOFU_VERSION}_amd64.deb" >/dev/null
-#           curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-#           curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" \
-#             | sed 's|$|  /usr/local/bin/kubectl|' | sha256sum -c -
-#           chmod +x /usr/local/bin/kubectl
-#           tofu version && ansible-playbook --version | head -1 && kubectl version --client
-
+#       # Not actions/checkout: it needs Node in this image and fetches
+#       # third-party code from github.com to run next to the secrets. The job
+#       # token is accepted as a basic-auth password.
 #       - name: Checkout
 #         env:
 #           TOKEN: ${{ gitea.token }}
@@ -85,14 +72,6 @@
 #           git checkout -q "${SHA}"
 #           git log -1 --format='%h %s'
 
-#       - name: Write credentials
-#         env:
-#           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-#         run: |
-#           umask 077
-#           mkdir -p ~/.ssh
-#           printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
-
 #       - name: deploy.sh
 #         env:
 #           TF_VAR_vm_password: ${{ secrets.VM_PASSWORD }}
@@ -104,9 +83,19 @@
 #           TF_HTTP_ADDRESS: ${{ env.GITEA_INTERNAL }}/api/packages/${{ gitea.repository_owner }}/terraform/state/k3s-proxmox
 #           TF_HTTP_USERNAME: ${{ vars.STATE_USER }}
 #           TF_HTTP_PASSWORD: ${{ secrets.STATE_TOKEN }}
-#         # bash: deploy.sh isn't executable in git (setup.sh chmods it locally).
-#         run: bash ./deploy.sh
+#           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+#         # The key goes into an agent for this step only, never onto disk;
+#         # ssh and Ansible find it through SSH_AUTH_SOCK. bash: deploy.sh isn't
+#         # executable in git (setup.sh chmods it locally).
+#         run: |
+#           eval "$(ssh-agent -s)" >/dev/null
+#           trap 'ssh-agent -k >/dev/null' EXIT
+#           printf '%s\n' "${SSH_PRIVATE_KEY}" | ssh-add -q -
+#           unset SSH_PRIVATE_KEY
+#           bash ./deploy.sh
 
+#       # The job's volume goes with the container; this covers a runner that
+#       # keeps it. The provider log is at debug level (terraform/main.tf).
 #       - name: Remove credentials
 #         if: always()
-#         run: rm -f ~/.ssh/id_ed25519 kubeconfig
+#         run: rm -f kubeconfig terraform/terraform-plugin-proxmox.log

@@ -23,6 +23,10 @@ chmod +x deploy.sh setup.sh 2>/dev/null || true
 
 echo -e "\n${GREEN}Checking prerequisites...${NC}"
 
+# Same versions as CI: the deploy job's image is the source (images/deploy/).
+TOFU_VERSION="$(sed -n 's/^ARG TOFU_VERSION=//p' images/deploy/Dockerfile)"
+KUBECTL_VERSION="$(sed -n 's/^ARG KUBECTL_VERSION=//p' images/deploy/Dockerfile)"
+
 # OpenTofu only (>= 1.8): terraform/main.tf uses state encryption.
 if command -v tofu &> /dev/null; then
     echo -e "${GREEN}[ok] OpenTofu: $(tofu version | head -n1)${NC}"
@@ -30,7 +34,7 @@ else
     echo -e "${YELLOW}[--] tofu not found. Installing OpenTofu...${NC}"
     curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh
     chmod +x /tmp/install-opentofu.sh
-    /tmp/install-opentofu.sh --install-method deb
+    /tmp/install-opentofu.sh --install-method deb --opentofu-version "${TOFU_VERSION}"
     rm -f /tmp/install-opentofu.sh
     echo -e "${GREEN}[ok] OpenTofu: $(tofu version | head -n1)${NC}"
 fi
@@ -53,7 +57,6 @@ if command -v kubectl &> /dev/null; then
     echo -e "${GREEN}[ok] kubectl: $(kubectl version --client | head -n1)${NC}"
 else
     echo -e "${YELLOW}[--] kubectl not found. Installing...${NC}"
-    KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
     curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
     sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
     rm -f /tmp/kubectl

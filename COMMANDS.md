@@ -105,6 +105,11 @@ kubectl delete secret gitea-runner-infra-registration -n gitea-runners-infra
 kubectl delete job runner-infra-token-bootstrap -n gitea-runners-infra
 ```
 
+The deploy job runs in `images/deploy/` (OpenTofu, Ansible, kubectl). To bump
+a tool: edit its `ARG` there and push. `deploy-image.yml` builds and pushes the
+image and prints its digest; put that digest in `deploy.yml`
+(`container.image`) and push again.
+
 ## State
 
 The OpenTofu state is in Gitea's package registry (org `Cloud-Infra`,

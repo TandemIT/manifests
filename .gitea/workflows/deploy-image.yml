@@ -1,0 +1,55 @@
+# Builds the deploy job's image (images/deploy/Dockerfile: OpenTofu, Ansible,
+# kubectl, ...) and pushes it to this org's private container registry, tagged
+# with the commit. Pin the digest it prints in deploy.yml (container.image):
+# a toolchain bump reaches deploys only through that reviewed commit.
+#
+# Runs on the infra runner, not the shared ones: the push token belongs to the
+# org that holds the state, and shared runners serve every org. Uses the
+# Cloud-Infra repo's STATE_USER / STATE_TOKEN (write:package also covers
+# container images; see deploy.yml).
+name: deploy-image
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - images/deploy/**
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: infra
+    timeout-minutes: 30
+    # Same major as the runner's dind sidecar.
+    container:
+      image: docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c
+    defaults:
+      run:
+        shell: sh
+    env:
+      # ROOT_URL's host: Gitea's registry sends clients there for tokens.
+      IMAGE: git.open-ict.hu/cloud-infra/deploy
+    steps:
+      - name: Build and push
+        env:
+          TOKEN: ${{ gitea.token }}
+          REPO: ${{ gitea.repository }}
+          SHA: ${{ gitea.sha }}
+          REGISTRY_USER: ${{ vars.STATE_USER }}
+          REGISTRY_TOKEN: ${{ secrets.STATE_TOKEN }}
+        run: |
+          # The build has no context, so the Dockerfile is all it needs.
+          wget -qO Dockerfile --header "Authorization: token ${TOKEN}" \
+            "http://gitea-http.gitea.svc.cluster.local:3000/api/v1/repos/${REPO}/raw/images/deploy/Dockerfile?ref=${SHA}"
+          # dind listens on 2375 in the runner pod, this job network's gateway.
+          gateway="$(ip route | awk '/^default/ {print $3}')"
+          export DOCKER_HOST="tcp://${gateway:?no default route}:2375"
+          printf '%s' "${REGISTRY_TOKEN}" | docker login "${IMAGE%%/*}" -u "${REGISTRY_USER}" --password-stdin
+          trap 'docker logout "${IMAGE%%/*}"' EXIT
+          docker build --pull -t "${IMAGE}:${SHA}" - < Dockerfile
+          docker push "${IMAGE}:${SHA}"
+          echo "Pin in deploy.yml: $(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${SHA}")"

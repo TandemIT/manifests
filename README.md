@@ -32,7 +32,7 @@ reconciles everything else from this repository. Operational commands are in
 | Garage | v1.0.0 | `apps/garage/statefulset.yaml` |
 | Anubis | v1.27.0 | `apps/anubis/deployment.yaml` |
 | Gitea runner | 3.5.0 | `apps/gitea-runner/deployment.yaml`, `apps/gitea-runner-infra/deployment.yaml` |
-| OpenTofu (CI), kubectl (CI) | 1.13.1, v1.32.3 | `.gitea/workflows/deploy.yml` (OpenTofu also `.claude/skills/validate/validate.sh`) |
+| OpenTofu, kubectl (CI image; `setup.sh` installs the same) | 1.13.1, v1.32.3 | `images/deploy/Dockerfile`; the image digest in `.gitea/workflows/deploy.yml` |
 
 ## Prerequisites
 
@@ -113,6 +113,7 @@ terraform/   Proxmox VMs + generated ansible/inventory.yml (OpenTofu, encrypted 
 ansible/     node utilities; drives scripts/01..03 (no install logic of its own)
 scripts/     01 bootstrap, 02/03 join, 05 reset apps, 06 auth providers, 07 pull state, lib-functions.sh
 .gitea/      deploy workflow: deploy.sh on the infra runner, from the Cloud-Infra mirror
+images/      deploy/: the deploy job's toolchain image (built by .gitea/workflows/deploy-image.yml)
 platform/    network foundation, applied by scripts/01 (not Argo CD)
 argocd/      install/ (Argo CD itself), root-app.yaml, apps/ (one Application per component)
 apps/        manifests and Helm values per component
