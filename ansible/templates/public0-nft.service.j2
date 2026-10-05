@@ -2,8 +2,15 @@
 [Unit]
 Description=nftables guard + reply marking for public0 (MetalLB public NIC)
 # Loaded before networking, so public0 is never up without the guard.
-Before=network-pre.target
+# DefaultDependencies=no (as Debian's nftables.service): the default
+# After=sysinit.target forms a cycle with cloud-init (in sysinit.target, after
+# network-pre), and systemd breaks it by dropping a job at boot: this unit
+# (public0 unguarded, replies leave via the wrong VLAN) or cloud-init.
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target shutdown.target
 Wants=network-pre.target
+Conflicts=shutdown.target
 
 [Service]
 Type=oneshot
