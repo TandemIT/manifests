@@ -22,11 +22,12 @@ terraform {
       keys = key_provider.pbkdf2.state
     }
     # Reads the pre-encryption local state once, during the migration to the
-    # http backend. Remove after that migration (COMMANDS.md).
+    # http backend. After that migration, remove it and the fallback and set
+    # enforced = true in state {} (OpenTofu rejects enforced while an
+    # unencrypted method exists; COMMANDS.md).
     method "unencrypted" "migrate" {}
     state {
-      method   = method.aes_gcm.state
-      enforced = true
+      method = method.aes_gcm.state
       fallback {
         method = method.unencrypted.migrate
       }

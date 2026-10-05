@@ -8,19 +8,23 @@ proxmox_api_url = "https://git.oicloud.local:8006/api2/json"
 
 # The VM password is NOT set here: export TF_VAR_vm_password before deploy.sh.
 
+# Public key for ubuntu@ on every VM (cloud-init): the deploy host's key and,
+# in CI, the pair of the SSH_PRIVATE_KEY secret. Only new VMs pick up a change.
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8PCTetpKZbk4yPeC8nkgGN2LcBXlhGCUMKV6hZkxuj oracle@wsl-k3s-deploy"
+
 # Proxmox Settings
 # NOTE: agent = 1 in main.tf makes tofu wait for qemu-guest-agent. The
 # template's image lacks it; the vendor snippet installs it on first boot.
-cloudinit_vendor_snippet = "local:snippets/ubuntu-noble.yaml"
+cloudinit_vendor_snippet = "local:snippets/ubuntu-resolute.yaml"
 
 proxmox_node    = "git"
-template_id     = "ubuntu-noble-template" # VMID 8200
-vm_id_start     = 200                     # control plane: 200..; workers: 300..
-storage         = "SAN-STORAGE"           # lvmthin, ~1.9 TB free (thin: sizes below are caps)
-bridge          = "vmbr2"                 # EXTRANET, VLAN-aware
-vlan_tag        = 10                      # 172.16.10.0/24
-public_vlan_tag = 0                       # untagged: VLAN 5 is the switch port's native VLAN. 2nd NIC, no address; MetalLB announces 145.89.192.138 on it
-public_gateway  = "145.89.192.1"          # router on VLAN 5: replies to public connections go back via it
+template_id     = "ubuntu-resolute-template" # VMID 8201, Ubuntu 26.04 (by name; 8200 = 24.04)
+vm_id_start     = 200                        # control plane: 200..; workers: 300..
+storage         = "SAN-STORAGE"              # lvmthin, ~1.9 TB free (thin: sizes below are caps)
+bridge          = "vmbr2"                    # EXTRANET, VLAN-aware
+vlan_tag        = 10                         # 172.16.10.0/24
+public_vlan_tag = 0                          # untagged: VLAN 5 is the switch port's native VLAN. 2nd NIC, no address; MetalLB announces 145.89.192.138 on it
+public_gateway  = "145.89.192.1"             # router on VLAN 5: replies to public connections go back via it
 gateway         = "172.16.10.1"
 nameserver      = "172.16.10.1"
 searchdomain    = "local"

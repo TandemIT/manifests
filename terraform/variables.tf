@@ -53,15 +53,15 @@ variable "proxmox_node" {
 }
 
 variable "template_id" {
-  description = "VM template name for cloning"
+  description = "VM template name for cloning (looked up by name: keep it unique in Proxmox)"
   type        = string
-  default     = "ubuntu-24.04-cloud-tpl"
+  default     = "ubuntu-resolute-template"
 }
 
 # A clone does not inherit the template's cicustom (the provider clears it),
 # so a vendor snippet set on the template never runs unless passed here.
 variable "cloudinit_vendor_snippet" {
-  description = "Cloud-init vendor snippet for new VMs, e.g. local:snippets/ubuntu-noble.yaml (empty = none)"
+  description = "Cloud-init vendor snippet for new VMs, e.g. local:snippets/ubuntu-resolute.yaml (empty = none)"
   type        = string
   default     = ""
 }
