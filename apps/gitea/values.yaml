@@ -97,7 +97,17 @@ postgresql-ha:
     pgpool:
       existingSecret: postgresql-ha-pgpool-credentials
 
+  # Ubuntu 26.04 (AppArmor 5) labels a container's forked children
+  # "cri-containerd.apparmor.d//&unconfined"; containerd 2.1.5's default
+  # profile only allows signals to "cri-containerd.apparmor.d", so postgres
+  # can't signal its own checkpointer (CHECKPOINT hangs, pg_basebackup fails,
+  # the standby never clones) and pgpool can't signal its children. Kernel
+  # log: apparmor="DENIED" operation="signal". Drop once the k3s containerd
+  # profile allows the stacked peer label.
   postgresql:
+    podSecurityContext:
+      appArmorProfile:
+        type: Unconfined
     replicaCount: 2
     repmgrConnectTimeout: 5
     repmgrReconnectAttempts: 2
@@ -107,6 +117,10 @@ postgresql-ha:
       size: 10Gi
 
   pgpool:
+    # Same AppArmor signal denial as postgresql above.
+    podSecurityContext:
+      appArmorProfile:
+        type: Unconfined
     replicaCount: 2
     numInitChildren: 8
     maxPool: 2
